@@ -195,9 +195,15 @@ Selective="Selective"><Step Function="<function attribute>" .../></Phaser>`. Imp
 - The window holds a `View3D` object; its window's `WindowSettings` is a `View3DSettings` with `Camera`, `Stage`,
   `RenderQuality` and more. `Camera` is a reference: assign `CurrentProfile().Cameras[n]` (Auto, Front, Front/Left,
   Left, ..., Top, 2D ...); `Set(..., "Camera", "<name>")` is silently ignored.
-- On onPC 2.5.1.1 (macOS, no MA hardware) the 3D window rendered the stage (floor grid, walls) but no fixtures or
-  beams, with 12 fixtures placed at 5 m and a cue playing; `GetDMXValue` also reads 0. Probably no visualisation
-  without output hardware; to be checked on a rig with MA hardware.
+- onPC renders fixtures and beams in the 3D window without MA hardware (checked on 2.5.1.1, macOS).
+- **`Store Image /Screen` is wrong on Retina screens**: it grabs a normal-resolution region of the double-resolution
+  framebuffer, i.e. the top-left quarter magnified. On the same Mac, capture the onPC window instead: the CoreGraphics
+  window list (JXA `CGWindowListCopyWindowInfo(kCGWindowListOptionAll)`, no Accessibility permission) gives the
+  window id of "Display <n> onPC ..." (layer 0), then `screencapture -x -o -l <id>`, which also works when the window
+  is behind others or on another Space. The window title also carries the show name.
+- Rotation: `RotX` 0 = hanging (beam down), 180 = standing (beam up).
+- `ColorRGB_R/G/B` are additive RGB even on CMY fixtures (grandMA3 converts): R100 G0 B0 is red on a CMY mixer.
+  Setting R0 G100 B100 to get "red" from cyan/magenta/yellow channels gives cyan.
 
 ## Executors, speed masters, pages
 

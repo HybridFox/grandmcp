@@ -52,7 +52,7 @@ change is complete. MA cannot undo a patch commit, so every apply first exports 
     Plugin "grandmcp"
     ```
 
-    The command line history should show `grandmcp 0.20.0 listening on 127.0.0.1:9810`. Save the show to keep the
+    The command line history should show `grandmcp 0.22.0 listening on 127.0.0.1:9810`. Save the show to keep the
     plugin in it. The plugin has to be started again after loading a show.
 
 3. Add the server to your MCP client. For Claude Code:
@@ -72,6 +72,35 @@ change is complete. MA cannot undo a patch commit, so every apply first exports 
 
 4. Ask Claude to check the connection ("what's the status of my console?"), or start a patch with the
    `patch_from_document` prompt.
+
+## Driving grandMA3 on another machine
+
+The MCP server can run on one machine (where Claude runs) and drive onPC or a console on another, for example your
+laptop and an onPC with wings on a show PC.
+
+1. On the grandMA3 machine, install the plugin: copy `plugin/grandmcp.xml` and `plugin/grandmcp.lua` into
+   `gma3_library/datapools/plugins` (Windows: `C:\ProgramData\MALightingTechnology\gma3_library\datapools\plugins`),
+   or run `pnpm install-plugin` there.
+2. Import it as in Setup, but start it in network mode:
+
+    ```
+    Plugin "grandmcp" "lan"
+    ```
+
+    The first start creates a token in `gma3_library/grandmcp-token.txt` on that machine. It stays the same across
+    restarts; delete the file to get a new one. (If the plugin is already running locally, stop it first with
+    `Plugin "grandmcp" "stop"`.)
+
+3. On the Claude machine, point the MCP server at it:
+
+    ```sh
+    claude mcp add grandmcp -e GRANDMCP_HOST=192.168.1.50 -e GRANDMCP_TOKEN=<token> -e GRANDMCP_ALLOW_WRITE=1 \
+      -- node /path/to/grandmcp/src/index.ts
+    ```
+
+Network clients must send the token before anything else and are dropped otherwise; clients on the grandMA3 machine
+itself need no token. The connection is not encrypted, so use it on a trusted show network only. On Windows, allow
+onPC through the firewall when asked. Dev ops (`"dev"`) never answer network clients.
 
 ## Tools
 
@@ -134,14 +163,15 @@ building groups, palettes, effects and executors for playing live, with you deci
 
 ## Configuration
 
-| Variable               | Default                  | Meaning                                                         |
-| ---------------------- | ------------------------ | --------------------------------------------------------------- |
-| `GRANDMCP_ALLOW_WRITE` | off                      | `1` enables tools that change the show                          |
-| `GRANDMCP_PORT`        | `9810`                   | Port of the Lua plugin                                          |
-| `GRANDMCP_HOST`        | `127.0.0.1`              | Host of the Lua plugin                                          |
-| `GRANDMCP_TIMEOUT_MS`  | `15000`                  | Default request timeout                                         |
-| `GMA3_LIBRARY`         | OS default               | Path to `gma3_library` (used by `pnpm install-plugin`)          |
-| `GMA3_MANUAL_DIR`      | newest installed version | Path to the HTML manual (`gma3_<version>/shared/language/HTML`) |
+| Variable               | Default                  | Meaning                                                                         |
+| ---------------------- | ------------------------ | ------------------------------------------------------------------------------- |
+| `GRANDMCP_ALLOW_WRITE` | off                      | `1` enables tools that change the show                                          |
+| `GRANDMCP_PORT`        | `9810`                   | Port of the Lua plugin                                                          |
+| `GRANDMCP_HOST`        | `127.0.0.1`              | Host of the Lua plugin                                                          |
+| `GRANDMCP_TOKEN`       | none                     | Token of a plugin started with `"lan"` (from `gma3_library/grandmcp-token.txt`) |
+| `GRANDMCP_TIMEOUT_MS`  | `15000`                  | Default request timeout                                                         |
+| `GMA3_LIBRARY`         | OS default               | Path to `gma3_library` (used by `pnpm install-plugin`)                          |
+| `GMA3_MANUAL_DIR`      | newest installed version | Path to the HTML manual (`gma3_<version>/shared/language/HTML`)                 |
 
 ## Changing existing fixtures
 
@@ -197,7 +227,7 @@ on executors. Everything is written as grandMA3 XML and imported, so the program
   executor is only replaced with `overwrite`.
 
 **3D**: `grandmcp_patch_plan_changes` also sets fixture positions and rotations (`posX/posY/posZ` in metres,
-`rotX/rotY/rotZ` in degrees, for example `rotX: 180` for fixtures hanging from a truss). `grandmcp_view3d` puts the 3D
+`rotX/rotY/rotZ` in degrees; in grandMA3 `rotX: 0` hangs a fixture from a truss and `rotX: 180` stands it on the floor). `grandmcp_view3d` puts the 3D
 window on a screen with a camera of your choice, and `grandmcp_screenshot` lets Claude look at it.
 
 **Playing it**: `grandmcp_executor_configure` sets what faders and buttons do (effect layers on Toggle or Flash, a
@@ -237,21 +267,22 @@ Replacing a preset or sequence exports the old one to `gma3_library/datapools/pr
 - Share imports need the console to reach MA's World Server (internet).
 - The plugin has to be started after every show load (`Plugin "grandmcp"`); grandMA3 has no show-load hook to start it
   automatically. Putting that command on a macro button is the easy way.
-- `grandmcp_screenshot` shows what is on a grandMA3 screen. On onPC 2.5.1 on a Mac without MA hardware, the 3D window
-  showed the stage but no fixtures or beams while a cue was playing; looking at looks may need MA hardware or a
-  console. Not verified yet.
-- The plugin only listens on 127.0.0.1. Driving a console on another machine is planned (see below).
+- `grandmcp_screenshot` shows a grandMA3 screen. Fixtures and beams render in onPC's 3D view without MA hardware.
+  When onPC runs on the same Mac, the onPC window is captured through macOS (grandMA3's own capture only grabs the
+  top-left corner on Retina screens); on other machines grandMA3 renders the screenshot itself.
+- Network mode is plain TCP with a token; not encrypted.
 
 ## Roadmap
 
 - Executor options (fader and button functions) and speed master BPM
 - Cues and looks from a description
-- Connecting to a console or onPC on another machine (LAN with a token, or a grandMA3 session)
+- Verifying network mode on a rig with MA hardware
 
 ## Development
 
 ```sh
 pnpm test          # unit tests (planner, library search, bridge client, manual search)
+pnpm test:e2e      # end-to-end suite against a running onPC with the plugin (test shows only)
 pnpm typecheck
 pnpm lint
 pnpm format
@@ -263,6 +294,10 @@ Talking to a running onPC:
   only listen on 127.0.0.1 and are never exposed as MCP tools. `Plugin "grandmcp" "dev off"` turns them off.
 - `pnpm probe ping`, `pnpm probe info`, `pnpm probe lua 'return Patch():Count()'`, `pnpm probe raw patch.list`
 - `pnpm reload` copies the plugin into the library and hot-swaps it in the running onPC (needs dev mode).
+- `pnpm test:e2e` drives every tool through the real MCP server against a running onPC. It works in a scratch area
+  (FIDs 9000-9004 in universe 500, pool slot 990, page 99, speed master 16), refuses to start if that area holds
+  anything it did not create, and cleans up afterwards. Moves and saving under a new name always ask a question on
+  the console, so they are not covered.
 - `pnpm smoke` runs the MCP server through a real MCP client against onPC. `pnpm smoke --write --fid 301` also
   imports a fixture type and patches three fixtures. Only use that on a test show.
 

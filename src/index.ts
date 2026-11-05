@@ -14,6 +14,7 @@ import { registerPatchTools } from './tools/patch.ts';
 import { registerPresetTools } from './tools/presets.ts';
 import { registerScreenshotTools } from './tools/screenshot.ts';
 import { registerSequenceTools } from './tools/sequences.ts';
+import { registerShowTools } from './tools/show.ts';
 import { registerStatusTools } from './tools/status.ts';
 import { createContext } from './context.ts';
 
@@ -31,6 +32,7 @@ serveStdio(() => {
 	registerSequenceTools(server, ctx);
 	registerEditingTools(server, ctx);
 	registerScreenshotTools(server, ctx);
+	registerShowTools(server, ctx);
 	registerManualTools(server, ctx);
 	registerPatchFromDocumentPrompt(server);
 	registerBuildBuskingShowPrompt(server);

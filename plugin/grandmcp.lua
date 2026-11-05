@@ -4,7 +4,9 @@
 --   response  {"id": <any>, "ok": true,  "result": <any>}
 --             {"id": <any>, "ok": false, "code": "<code>", "error": "<message>"}
 --
--- Start:    Plugin "grandmcp"            (or Plugin "grandmcp" "dev" to enable the probe ops)
+-- Start:    Plugin "grandmcp"            local only (127.0.0.1)
+--           Plugin "grandmcp" "lan"      all network interfaces; network clients must send the token first
+--           (add "dev" to enable the probe ops, which only ever answer local clients)
 -- Control:  Plugin "grandmcp" "stop" | "status" | "dev on" | "dev off"
 
 local myHandle = select(4, ...)
@@ -12,8 +14,9 @@ local myHandle = select(4, ...)
 local socket = require("socket")
 local json = require("json")
 
-local VERSION = "0.20.0"
-local HOST = "127.0.0.1" -- unauthenticated: never bind beyond loopback
+local VERSION = "0.22.1"
+local LOCAL_HOST = "127.0.0.1"
+local TOKEN_FILE = "grandmcp-token.txt" -- in gma3_library
 local PORT = 9810
 local MAX_LINES_PER_TICK = 32
 local MAX_LINE_BYTES = 4 * 1024 * 1024
@@ -119,8 +122,11 @@ local function devEnabled()
 	return shared.current ~= nil and shared.current.dev == true
 end
 
+local activeClient -- the client whose request is being handled
+
 local function requireDev()
 	if not devEnabled() then fail("dev-disabled", 'start the plugin with Plugin "grandmcp" "dev on"') end
+	if not (activeClient and activeClient.loopback) then fail("dev-local-only", "dev ops only answer clients on this machine") end
 end
 
 local ops = {}
@@ -150,6 +156,7 @@ ops.info = function()
 		end)(),
 		commandLine = CmdObj():Get("Destination", Enums.Roles.Display),
 		dev = devEnabled(),
+		network = shared.current and (shared.current.lan and "lan" or "local") or nil,
 	}
 end
 
@@ -2131,11 +2138,13 @@ local POOL_KINDS = {
 	sequence = { keyword = "Sequence", folder = "sequences", get = function(a) return DataPool().Sequences[math.tointeger(a.no) or -1] end },
 	group = { keyword = "Group", folder = "groups", get = function(a) return DataPool().Groups[math.tointeger(a.no) or -1] end },
 	matricks = { keyword = "MAtricks", folder = "matricks", get = function(a) return DataPool().MAtricks[math.tointeger(a.no) or -1] end },
+	layout = { keyword = "Layout", folder = "layouts", get = function(a) return DataPool().Layouts[math.tointeger(a.no) or -1] end },
+	appearance = { keyword = "Appearance", folder = "appearances", get = function(a) return ShowData().Appearances[math.tointeger(a.no) or -1] end },
 }
 
 local function poolRef(kind, a, no)
 	local k = POOL_KINDS[kind]
-	if not k then fail("bad-args", "kind must be preset, sequence, group or matricks") end
+	if not k then fail("bad-args", "kind must be preset, sequence, group, matricks, layout or appearance") end
 	if kind == "preset" then return string.format("%s %d.%d", k.keyword, math.tointeger(a.pool) or 0, math.tointeger(no) or 0), k end
 	return string.format("%s %d", k.keyword, math.tointeger(no) or 0), k
 end
@@ -2399,6 +2408,77 @@ ops["layout.store"] = function(args)
 	return info
 end
 
+---------------------------------------------------------------------------
+-- Saving the show. grandMA3 can ask before saving (e.g. "Change show file name?" when saving under a new name);
+-- like moves, show.save then reports the question and show.saveFinish checks what happened once it is answered.
+---------------------------------------------------------------------------
+
+local pendingSave -- { name, startedAt }
+
+local function showFileName()
+	local name = blankToNil(display(Root().MAnetSocket, "ShowFile"))
+	return name
+end
+
+-- The newest file written for a show since `since` (epoch seconds), or nil.
+local function savedFile(name, since)
+	local dir = GetPath(Enums.PathType.Showfiles)
+	for _, entry in ipairs(DirList(dir, "*.show") or {}) do
+		local base = entry.name:gsub("%.show$", "")
+		if (not name or base == name) and (entry.time or 0) >= since - 1 then
+			return { file = dir .. GetPathSeparator() .. entry.name, size = entry.size, time = entry.time }
+		end
+	end
+	return nil
+end
+
+ops["show.status"] = function()
+	return {
+		name = showFileName(),
+		status = GetShowFileStatus(),
+		folder = GetPath(Enums.PathType.Showfiles),
+		dialog = describeModal(GetTopModal()),
+		pendingSave = pendingSave and pendingSave.name or nil,
+	}
+end
+
+local function finishSave(save)
+	pendingSave = nil
+	local file = savedFile(save.name, save.startedAt)
+	return { pending = false, saved = file ~= nil, name = showFileName(), file = file and file.file, size = file and file.size }
+end
+
+-- args: { name? } -> saves under the current name, or under a new one.
+ops["show.save"] = function(args)
+	if pendingSave then fail("busy", "a save is waiting for an answer on the console; call show.saveFinish") end
+	guardIdle()
+	local name = args.name
+	if name ~= nil and (type(name) ~= "string" or name == "" or name:find('["/\\]')) then fail("bad-args", "name must be a file name without quotes or slashes") end
+	local target = name or showFileName()
+	local save = { name = target, startedAt = os.time() }
+	CmdIndirect(name and string.format('SaveShow "%s"', name) or "SaveShow")
+	local t0 = socket.gettime()
+	repeat
+		coroutine.yield(0.1)
+		if GetTopModal() ~= nil then
+			pendingSave = save
+			return { pending = true, dialog = describeModal(GetTopModal()) }
+		end
+	until (savedFile(target, save.startedAt) and GetShowFileStatus() == "ShowLoaded") or socket.gettime() - t0 > 20
+	return finishSave(save)
+end
+
+ops["show.saveFinish"] = function()
+	local save = pendingSave
+	if not save then fail("not-found", "no save is waiting") end
+	if GetTopModal() ~= nil then return { pending = true, dialog = describeModal(GetTopModal()) } end
+	local t0 = socket.gettime()
+	repeat
+		coroutine.yield(0.1)
+	until GetShowFileStatus() == "ShowLoaded" or socket.gettime() - t0 > 20
+	return finishSave(save)
+end
+
 -- Probe ops for development; disabled unless started with "dev".
 ops.cmd = function(args)
 	requireDev()
@@ -2455,6 +2535,8 @@ local function onError(e)
 	return { code = "lua-error", message = tostring(e), traceback = debug.traceback("", 2) }
 end
 
+ops.hello = function() return {} end -- handled in handleLine; listed so it is a known op
+
 local function handleLine(cl, line)
 	local okDecode, req = pcall(json.decode, line)
 	if not okDecode or type(req) ~= "table" then
@@ -2465,7 +2547,24 @@ local function handleLine(cl, line)
 		return reply(cl, { id = req.id, ok = false, code = "unknown-op", error = "unknown op '" .. tostring(req.op) .. "'" })
 	end
 	local args = type(req.args) == "table" and req.args or {}
+	if req.op == "hello" then
+		local inst = shared.current
+		if cl.authenticated or (inst and inst.token and args.token == inst.token) then
+			cl.authenticated = true
+			return reply(cl, { id = req.id, ok = true, result = { authenticated = true, plugin = VERSION } })
+		end
+		reply(cl, { id = req.id, ok = false, code = "unauthorized", error = "wrong or missing token" })
+		cl.dead = true
+		return
+	end
+	if not cl.authenticated then
+		reply(cl, { id = req.id, ok = false, code = "unauthorized", error = "send hello with the token first (gma3_library/" .. TOKEN_FILE .. " on the console)" })
+		cl.dead = true
+		return
+	end
+	activeClient = cl
 	local ok, result = xpcall(op, onError, args)
+	activeClient = nil
 	if ok then
 		reply(cl, { id = req.id, ok = true, result = result })
 	else
@@ -2509,17 +2608,62 @@ local function isAlive(inst)
 	return inst.server ~= nil and not inst.stopRequested and socket.gettime() - inst.lastTick <= STALE_AFTER_S
 end
 
-local function serve(dev)
-	local server, err = socket.bind(HOST, PORT)
+local function tokenPath()
+	return GetPath(Enums.PathType.Library) .. GetPathSeparator() .. TOKEN_FILE
+end
+
+-- The token network clients must send; created once and kept in gma3_library so it survives restarts.
+local function loadOrCreateToken()
+	local path = tokenPath()
+	local f = io.open(path, "r")
+	local token = f and (f:read("l") or ""):match("^%s*(%x+)%s*$")
+	if f then f:close() end
+	if token and #token >= 32 then return token end
+	local bytes = {}
+	local random = io.open("/dev/urandom", "rb")
+	if random then
+		local raw = random:read(16)
+		random:close()
+		for i = 1, #(raw or "") do bytes[#bytes + 1] = string.format("%02x", raw:byte(i)) end
+	end
+	if #bytes < 16 then
+		math.randomseed(math.floor(socket.gettime() * 1e6) % 2147483647)
+		bytes = {}
+		for _ = 1, 16 do bytes[#bytes + 1] = string.format("%02x", math.random(0, 255)) end
+	end
+	token = table.concat(bytes)
+	f = io.open(path, "w")
+	if not f then error("cannot write " .. path) end
+	f:write(token, "\n")
+	f:close()
+	return token
+end
+
+local function serve(opts)
+	local host = opts.lan and "*" or LOCAL_HOST
+	local token
+	if opts.lan then
+		local okToken, result = pcall(loadOrCreateToken)
+		if not okToken then
+			ErrPrintf("grandmcp: %s", tostring(result))
+			return
+		end
+		token = result
+	end
+	local server, err = socket.bind(host, PORT)
 	if not server then
-		ErrPrintf("grandmcp: cannot listen on %s:%d (%s)", HOST, PORT, tostring(err))
+		ErrPrintf("grandmcp: cannot listen on %s:%d (%s)", host, PORT, tostring(err))
 		return
 	end
 	server:settimeout(0)
-	local inst = { server = server, clients = {}, dev = dev, stopRequested = false, lastTick = socket.gettime() }
+	local inst = { server = server, clients = {}, dev = opts.dev, lan = opts.lan, host = host, token = token, stopRequested = false, lastTick = socket.gettime() }
 	mine = inst
 	shared.current = inst
-	Printf("grandmcp %s listening on %s:%d%s", VERSION, HOST, PORT, dev and " (dev ops enabled)" or "")
+	if opts.lan then
+		Printf("grandmcp %s listening on all interfaces, port %d%s. Network clients need the token in %s", VERSION, PORT, opts.dev and " (dev ops for local clients)" or "", tokenPath())
+	else
+		Printf("grandmcp %s listening on %s:%d%s", VERSION, host, PORT, opts.dev and " (dev ops enabled)" or "")
+	end
 
 	local ok, loopErr = xpcall(function()
 		while not inst.stopRequested do
@@ -2528,7 +2672,9 @@ local function serve(dev)
 			if c then
 				c:settimeout(0)
 				pcall(function() c:setoption("tcp-nodelay", true) end)
-				table.insert(inst.clients, { sock = c, buf = "" })
+				local peer = c:getpeername()
+				local loopback = peer == "127.0.0.1" or peer == "::1"
+				table.insert(inst.clients, { sock = c, buf = "", loopback = loopback, authenticated = loopback, peer = peer })
 			end
 			for i = #inst.clients, 1, -1 do
 				local cl = inst.clients[i]
@@ -2553,10 +2699,11 @@ ops.reload = function()
 	local plugin = myHandle and myHandle:Parent()
 	local slot = plugin and tonumber(tostring(plugin:Get("No", Enums.Roles.Display)):match("^%d+"))
 	if not slot then fail("not-found", "cannot find this plugin's pool slot") end
+	local lan = shared.current and shared.current.lan
 	stopListening(shared.current)
 	CmdIndirect(string.format("Delete Plugin %d /NoConfirmation", slot))
 	CmdIndirect(string.format('Import Plugin Library "grandmcp.xml" At Plugin %d', slot))
-	CmdIndirect(string.format('Plugin %d "dev"', slot))
+	CmdIndirect(string.format('Plugin %d "dev%s"', slot, lan and " lan" or ""))
 	return { slot = slot, reloading = true }
 end
 
@@ -2566,7 +2713,7 @@ end
 
 local function statusLine(inst)
 	if not inst then return string.format("grandmcp %s: stopped", VERSION) end
-	return string.format("grandmcp %s: running on %s:%d, %d client(s), dev ops %s", VERSION, HOST, PORT, #inst.clients, inst.dev and "on" or "off")
+	return string.format("grandmcp %s: running on %s:%d (%s), %d client(s), dev ops %s", VERSION, inst.host, PORT, inst.lan and "network, token required" or "local only", #inst.clients, inst.dev and "on" or "off")
 end
 
 local function Main(_, argument)
@@ -2596,7 +2743,9 @@ local function Main(_, argument)
 		end
 		return
 	end
-	serve(arg == "dev" or arg == "dev on")
+	local words = {}
+	for word in arg:gmatch("%S+") do words[word] = true end
+	serve({ dev = words.dev == true, lan = words.lan == true })
 end
 
 local function Cleanup()

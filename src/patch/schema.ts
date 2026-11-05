@@ -56,7 +56,10 @@ export const fixtureChangeSchema = z
 		posX: z.number().optional().describe('3D position in metres: X (stage left/right).'),
 		posY: z.number().optional().describe('3D position in metres: Y (downstage/upstage).'),
 		posZ: z.number().optional().describe('3D position in metres: Z (height).'),
-		rotX: z.number().optional().describe('3D rotation in degrees around X (180 = hanging upside down from a truss).'),
+		rotX: z
+			.number()
+			.optional()
+			.describe('3D rotation in degrees around X. In grandMA3, 0 = hanging from a truss (beam down), 180 = standing on the floor (beam up).'),
 		rotY: z.number().optional().describe('3D rotation in degrees around Y.'),
 		rotZ: z.number().optional().describe('3D rotation in degrees around Z (which way the fixture faces).'),
 	})

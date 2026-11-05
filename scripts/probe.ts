@@ -7,7 +7,7 @@ import { BridgeClient, BridgeError } from '../src/bridge/client.ts';
 import { config } from '../src/config.ts';
 
 const [op = 'ping', ...rest] = process.argv.slice(2);
-const bridge = new BridgeClient({ host: config.host, port: config.port, timeoutMs: config.timeoutMs });
+const bridge = new BridgeClient({ host: config.host, port: config.port, timeoutMs: config.timeoutMs, token: config.token });
 
 function argsFor(): [string, Record<string, unknown>] {
 	if (op === 'cmd') return ['cmd', { command: rest.join(' ') }];

@@ -35,7 +35,7 @@ export interface AppContext {
 }
 
 export function createContext(): AppContext {
-	const bridge = new BridgeClient({ host: config.host, port: config.port, timeoutMs: config.timeoutMs });
+	const bridge = new BridgeClient({ host: config.host, port: config.port, timeoutMs: config.timeoutMs, token: config.token });
 
 	let queue: Promise<unknown> = Promise.resolve();
 	const plans = new Map<string, StoredPlan>();

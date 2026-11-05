@@ -25,5 +25,7 @@ export const config = {
 	port: intEnv('GRANDMCP_PORT', 9810),
 	timeoutMs: intEnv('GRANDMCP_TIMEOUT_MS', 15000),
 	allowWrite: process.env.GRANDMCP_ALLOW_WRITE === '1',
+	/** Token of a plugin running in network mode; empty for a local plugin. */
+	token: process.env.GRANDMCP_TOKEN || undefined,
 	libraryDir: process.env.GMA3_LIBRARY ?? defaultLibraryDir(),
 };

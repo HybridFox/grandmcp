@@ -26,6 +26,8 @@ export interface BridgeOptions {
 	port: number;
 	timeoutMs: number;
 	connectTimeoutMs?: number;
+	/** Token for a plugin started in network mode (Plugin "grandmcp" "lan"); sent before any request. */
+	token?: string;
 }
 
 interface Pending {
@@ -91,7 +93,32 @@ export class BridgeClient {
 				clearTimeout(timer);
 				this.socket = socket;
 				this.buffer = '';
-				resolve(socket);
+
+				if (!this.options.token) {
+					resolve(socket);
+
+					return;
+				}
+
+				// Network mode: the plugin answers nothing but hello until the token matches, and drops us if it does not.
+				const id = `hello-${this.nextId++}`;
+				const refuse = (message: string) => {
+					this.socket = undefined;
+					socket.destroy();
+					reject(new BridgeError(message, 'unauthorized', 'not-sent'));
+				};
+				this.pending.set(id, {
+					resolve: () => resolve(socket),
+					reject: (error) =>
+						refuse(
+							`the grandmcp plugin at ${host}:${port} refused the token (${error.message}). Check GRANDMCP_TOKEN against gma3_library/grandmcp-token.txt on the console.`,
+						),
+					timer: setTimeout(() => {
+						this.pending.delete(id);
+						refuse(`no answer to the token from ${host}:${port}`);
+					}, connectTimeoutMs),
+				});
+				socket.write(JSON.stringify({ id, op: 'hello', args: { token: this.options.token } }) + '\n');
 			});
 			socket.on('data', (chunk: string) => this.onData(chunk));
 			socket.on('error', () => {}); // the close handler below does the work

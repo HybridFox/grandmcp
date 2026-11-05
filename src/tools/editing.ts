@@ -6,7 +6,7 @@ import type { AppContext } from '../context.ts';
 import { fromError, ok, WRITES_DISABLED } from './result.ts';
 import { cueSchema } from './sequences.ts';
 
-const kindSchema = z.enum(['preset', 'sequence', 'group', 'matricks']);
+const kindSchema = z.enum(['preset', 'sequence', 'group', 'matricks', 'layout', 'appearance']);
 
 type ReadValue = { slot?: string; percent?: number; physical?: number; function?: string; effect?: { steps: ReadValue[]; bpm: number; phase: number } };
 
@@ -175,7 +175,7 @@ export function registerEditingTools(server: McpServer, ctx: AppContext): void {
 		'grandmcp_pool_delete',
 		{
 			title: 'Delete pool object',
-			description: 'Delete a preset, sequence, group or MAtricks. It is exported to gma3_library/datapools first.',
+			description: 'Delete a preset, sequence, group, MAtricks, layout or appearance. It is exported to gma3_library/datapools first.',
 			inputSchema: z.object({ kind: kindSchema, pool: poolField, no: z.number().int().min(1) }),
 			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
 		},
@@ -205,7 +205,7 @@ export function registerEditingTools(server: McpServer, ctx: AppContext): void {
 		{
 			title: 'Copy pool object',
 			description:
-				'Copy a preset (within its pool), sequence, group or MAtricks to another slot, e.g. to make a variant. Replacing an existing target needs overwrite and exports it first.',
+				'Copy a preset (within its pool), sequence, group, MAtricks, layout or appearance to another slot, e.g. to make a variant. Replacing an existing target needs overwrite and exports it first.',
 			inputSchema: z.object({
 				kind: kindSchema,
 				pool: poolField,
@@ -240,7 +240,7 @@ export function registerEditingTools(server: McpServer, ctx: AppContext): void {
 		'grandmcp_pool_rename',
 		{
 			title: 'Rename pool object',
-			description: 'Rename a preset, sequence, group or MAtricks.',
+			description: 'Rename a preset, sequence, group, MAtricks, layout or appearance.',
 			inputSchema: z.object({ kind: kindSchema, pool: poolField, no: z.number().int().min(1), name: z.string().min(1).max(100) }),
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
 		},

@@ -18,7 +18,8 @@ Propose, explain and ask; build in small steps and show what you built after eac
 4. Palettes (presets), with a numbering scheme the user can remember: the same slot means the same thing in every
    pool (for example colour 1 = red, 2 = amber, 3 = white for every group).
    - Colour: a set of named colours that work on every fixture type in the rig. Mixing fixtures use percentages;
-     wheel fixtures use the closest slot; check what grandmcp_fixture_attributes offers.
+     ColorRGB_R/G/B are additive RGB even on CMY fixtures (red = R 100, G 0, B 0). Wheel fixtures use the closest
+     slot; check what grandmcp_fixture_attributes offers.
    - Position: centre, audience, floor, fans, crossed, up. Ask how fixtures are hung before inventing angles.
    - Beam and gobo: open, a few gobos, prism, zoom wide and narrow.
    Use grandmcp_preset_store and report anything it could not verify.
@@ -45,8 +46,8 @@ Propose, explain and ask; build in small steps and show what you built after eac
 8. Make it readable: colour the buttons with appearances that match their content (grandmcp_appearance_store) and
    build a layout view of the rig (grandmcp_layout_store). To adjust later, read with grandmcp_preset_read /
    grandmcp_sequence_read and edit single cues with grandmcp_cue_store.
-9. Check your work. grandmcp_screenshot shows a grandMA3 screen; if the user has a 3D window there, look at it after
-   building a look. Never answer grandMA3 pop-ups yourself: tell the user what they ask.
+9. Check your work: grandmcp_view3d puts the 3D view on a screen, play the look, then grandmcp_screenshot shows it.
+   Compare what you see with what you meant (colour, direction, spread) and fix mismatches. Never answer grandMA3 pop-ups yourself: tell the user what they ask.
 10. Finish with a map of what is where: groups, palette numbers, effects and speed masters, sequences and executors,
    so the user can play it without asking you.`;
 

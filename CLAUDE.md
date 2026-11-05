@@ -22,7 +22,9 @@ plugin over newline-delimited JSON on TCP 127.0.0.1:9810. See README.md for the 
 - `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`: all must pass before work is done.
 - `pnpm reload`: copy the plugin into gma3_library and hot-swap it in the running onPC (plugin must run in dev mode).
 - `pnpm probe <ping|info|cmd ...|lua ...|raw op json>`: talk to the plugin directly.
-- `pnpm smoke` (read-only) / `pnpm smoke --write --fid N` (test show only): end-to-end check.
+- `pnpm test:e2e`: full end-to-end suite through the MCP server against a running onPC (test show, plugin started,
+  no pop-up open). Run it after plugin changes and on new grandMA3 versions.
+- `pnpm smoke` (read-only) / `pnpm smoke --write --fid N` (test show only): quick end-to-end check.
 
 ## Rules
 

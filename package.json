@@ -23,7 +23,8 @@
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
 		"reload": "tsx scripts/install-plugin.ts && tsx scripts/probe.ts raw reload",
-		"smoke": "tsx scripts/smoke.ts"
+		"smoke": "tsx scripts/smoke.ts",
+		"test:e2e": "vitest run --config vitest.e2e.config.ts"
 	},
 	"dependencies": {
 		"@modelcontextprotocol/server": "2.4.0",

@@ -219,3 +219,47 @@ describe('BridgeClient', () => {
 		expect(server.connections).toBe(1);
 	});
 });
+
+describe('BridgeClient network mode', () => {
+	/** A plugin in LAN mode: only hello until the token matches, then normal requests; drops wrong tokens. */
+	const lanPlugin = () =>
+		fakePlugin((socket, request) => {
+			const state = socket as net.Socket & { authed?: boolean };
+
+			if (request.op === 'hello') {
+				if (request.args.token === 'secret') {
+					state.authed = true;
+					reply(socket, { id: request.id, ok: true, result: { authenticated: true } });
+				} else {
+					reply(socket, { id: request.id, ok: false, code: 'unauthorized', error: 'wrong or missing token' });
+					socket.end();
+				}
+
+				return;
+			}
+
+			reply(
+				socket,
+				state.authed
+					? { id: request.id, ok: true, result: request.op }
+					: { id: request.id, ok: false, code: 'unauthorized', error: 'send hello first' },
+			);
+		});
+
+	it('sends the token before the first request', async () => {
+		const server = await lanPlugin();
+		const bridge = new BridgeClient({ host: '127.0.0.1', port: server.port, timeoutMs: 2000, token: 'secret' });
+		clients.push(bridge);
+
+		await expect(bridge.request('ping')).resolves.toBe('ping');
+		await expect(bridge.request('info')).resolves.toBe('info');
+	});
+
+	it('reports a refused token as unauthorized and not sent', async () => {
+		const server = await lanPlugin();
+		const bridge = new BridgeClient({ host: '127.0.0.1', port: server.port, timeoutMs: 2000, token: 'wrong' });
+		clients.push(bridge);
+
+		await expect(bridge.request('ping')).rejects.toMatchObject({ code: 'unauthorized', outcome: 'not-sent' });
+	});
+});
