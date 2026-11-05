@@ -5,6 +5,7 @@
 	"type": "module",
 	"private": true,
 	"license": "MIT",
+	"packageManager": "pnpm@11.18.0",
 	"engines": {
 		"node": ">=24"
 	},
