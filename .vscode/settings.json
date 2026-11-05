@@ -1,0 +1,6 @@
+{
+	"editor.codeActionsOnSave": {
+		"source.fixAll.eslint": "explicit"
+	},
+	"typescript.tsserver.maxTsServerMemory": 8192
+}

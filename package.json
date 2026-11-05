@@ -1,0 +1,47 @@
+{
+	"name": "grandmcp",
+	"version": "0.1.0",
+	"description": "MCP server for grandMA3: read and write a running show through a Lua bridge plugin",
+	"type": "module",
+	"private": true,
+	"license": "MIT",
+	"engines": {
+		"node": ">=24"
+	},
+	"bin": {
+		"grandmcp": "src/index.ts"
+	},
+	"scripts": {
+		"start": "tsx src/index.ts",
+		"probe": "tsx scripts/probe.ts",
+		"install-plugin": "tsx scripts/install-plugin.ts",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"lint": "eslint .",
+		"lint:fix": "eslint . --fix",
+		"format": "prettier --write .",
+		"format:check": "prettier --check ."
+	},
+	"dependencies": {
+		"@modelcontextprotocol/server": "2.4.0",
+		"node-html-parser": "9.0.6",
+		"zod": "4.6.7"
+	},
+	"devDependencies": {
+		"@eslint/js": "10.0.1",
+		"@types/node": "26.6.6",
+		"@typescript-eslint/eslint-plugin": "8.71.2",
+		"@typescript-eslint/parser": "8.71.2",
+		"editorconfig": "3.0.2",
+		"eslint": "10.12.0",
+		"eslint-config-prettier": "10.1.8",
+		"eslint-plugin-import": "2.32.0",
+		"eslint-plugin-prettier": "5.5.7",
+		"eslint-plugin-simple-import-sort": "14.0.0",
+		"prettier": "3.9.10",
+		"tsx": "4.23.15",
+		"typescript": "6.0.3",
+		"typescript-eslint": "8.71.2",
+		"vitest": "5.1.0"
+	}
+}
