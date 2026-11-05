@@ -28,18 +28,26 @@ Propose, explain and ask; build in small steps and show what you built after eac
    - colour: two- or three-colour chases using the palette colours,
    - movement: pan sweep, tilt wave, circle; small and large versions.
    Phase spreads give the pattern: 0-360 is a chase, 0-180 a softer wave, the same phase everywhere is unison.
+   The effect's pattern option shapes it further: wings 2 mirrors it (outside in), wings 2 + invert runs from the
+   centre out, groups 2 gives odd/even. Also store a few MAtricks (grandmcp_matricks_store) to vary effects live.
 6. Sequences and executors. Turn the building blocks into things to play, referencing presets so the user can change
    a palette once:
    - base looks per style (colour + position + beam), one cue each or a short cue list,
    - effect layers as separate sequences (dimmer FX, colour FX, movement FX) so they can be combined live,
    - utilities: blinder or full-on flash, strobe, blackout.
-   Propose the executor layout to the user and only assign it once they agree (grandmcp_executor_assign).
+   Propose the executor layout to the user and only assign it once they agree (grandmcp_executor_assign), then set
+   fader and button functions (grandmcp_executor_configure: effect layers on Toggle or Flash, utilities on Flash),
+   put the speed masters on executors as tap buttons (grandmcp_speedmaster_set) and name the pages
+   (grandmcp_page_store).
 7. Styles. Variations rather than separate shows: per style mainly different palettes, effect speeds and intensity.
    For example: techno = cold colours, fast dimmer chases and strobe; house = warm colours, slower chases, more
    movement; ambient = slow fades, few effects.
-8. Check your work. grandmcp_screenshot shows a grandMA3 screen; if the user has a 3D window there, look at it after
+8. Make it readable: colour the buttons with appearances that match their content (grandmcp_appearance_store) and
+   build a layout view of the rig (grandmcp_layout_store). To adjust later, read with grandmcp_preset_read /
+   grandmcp_sequence_read and edit single cues with grandmcp_cue_store.
+9. Check your work. grandmcp_screenshot shows a grandMA3 screen; if the user has a 3D window there, look at it after
    building a look. Never answer grandMA3 pop-ups yourself: tell the user what they ask.
-9. Finish with a map of what is where: groups, palette numbers, effects and speed masters, sequences and executors,
+10. Finish with a map of what is where: groups, palette numbers, effects and speed masters, sequences and executors,
    so the user can play it without asking you.`;
 
 export function registerBuildBuskingShowPrompt(server: McpServer): void {

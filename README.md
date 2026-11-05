@@ -52,7 +52,7 @@ change is complete. MA cannot undo a patch commit, so every apply first exports 
     Plugin "grandmcp"
     ```
 
-    The command line history should show `grandmcp 0.14.0 listening on 127.0.0.1:9810`. Save the show to keep the
+    The command line history should show `grandmcp 0.20.0 listening on 127.0.0.1:9810`. Save the show to keep the
     plugin in it. The plugin has to be started again after loading a show.
 
 3. Add the server to your MCP client. For Claude Code:
@@ -75,32 +75,41 @@ change is complete. MA cannot undo a patch commit, so every apply first exports 
 
 ## Tools
 
-| Tool                                             | What it does                                                                                                                                                           | Writes |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| `grandmcp_status`                                | Connection check: software version, host type, show status, open pop-ups                                                                                               |        |
-| `grandmcp_get`, `grandmcp_children`              | Read any object in the grandMA3 object tree                                                                                                                            |        |
-| `grandmcp_patch_list`                            | Every fixture in the live patch with FID, type, mode, footprint and address                                                                                            |        |
-| `grandmcp_fixture_types`                         | Fixture types in the show, with DMX modes and channel counts                                                                                                           |        |
-| `grandmcp_fixture_library_search`                | Search the full fixture catalog (MA3, MA2, your files, GDTF Share, Fixture Share) with DMX modes; filter by channel count                                              |        |
-| `grandmcp_fixture_type_import`                   | Import a catalog entry into the show (Share entries are downloaded first)                                                                                              | yes    |
-| `grandmcp_patch_plan`                            | Work out FIDs and addresses for a fixture list and check every conflict. Changes nothing                                                                               |        |
-| `grandmcp_patch_plan_changes`                    | Plan changes to existing fixtures: remove, new FID, rename, re-address or unpatch, new type or mode. Lists where removed or retyped fixtures are used. Changes nothing |        |
-| `grandmcp_patch_apply`                           | Back up the patch, apply an add or change plan, commit, read back and verify                                                                                           | yes    |
-| `grandmcp_patch_move`                            | Move fixtures under a grouping fixture or back to the top level; reports grandMA3's question for you to answer                                                         | yes    |
-| `grandmcp_patch_move_finish`                     | Complete a move after you answered on the console                                                                                                                      | yes    |
-| `grandmcp_group_list`                            | Groups in the current data pool with their fixture IDs                                                                                                                 |        |
-| `grandmcp_group_store`                           | Create or replace a group with exactly these fixtures, in order                                                                                                        | yes    |
-| `grandmcp_group_delete`                          | Delete a group (exported first)                                                                                                                                        | yes    |
-| `grandmcp_fixture_attributes`                    | What a fixture type can do: attributes, channel functions, physical ranges, named slots (wheel positions, gel macros, strobe modes)                                    |        |
-| `grandmcp_preset_list`                           | Presets per pool with their fixtures and attributes                                                                                                                    |        |
-| `grandmcp_preset_store`                          | Create or replace a preset from values or effects per fixture, verified after import                                                                                   | yes    |
-| `grandmcp_sequence_list`                         | Sequences with their cues, fade times and triggers                                                                                                                     |        |
-| `grandmcp_sequence_store`                        | Create or replace a sequence whose cues reference presets and/or carry values, with timing and triggers                                                                | yes    |
-| `grandmcp_executor_list`                         | What is assigned to the executors of a page                                                                                                                            |        |
-| `grandmcp_executor_assign`                       | Put a sequence on an executor                                                                                                                                          | yes    |
-| `grandmcp_view3d`                                | Put grandMA3's 3D window on a screen (adds one if needed) and pick a camera                                                                                            | yes    |
-| `grandmcp_screenshot`                            | A screenshot of a grandMA3 screen, rendered by grandMA3 itself                                                                                                         |        |
-| `grandmcp_manual_search`, `grandmcp_manual_read` | Search and read the grandMA3 manual that ships with onPC                                                                                                               |        |
+| Tool                                                                 | What it does                                                                                                                                                           | Writes |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `grandmcp_status`                                                    | Connection check: software version, host type, show status, open pop-ups                                                                                               |        |
+| `grandmcp_get`, `grandmcp_children`                                  | Read any object in the grandMA3 object tree                                                                                                                            |        |
+| `grandmcp_patch_list`                                                | Every fixture in the live patch with FID, type, mode, footprint and address                                                                                            |        |
+| `grandmcp_fixture_types`                                             | Fixture types in the show, with DMX modes and channel counts                                                                                                           |        |
+| `grandmcp_fixture_library_search`                                    | Search the full fixture catalog (MA3, MA2, your files, GDTF Share, Fixture Share) with DMX modes; filter by channel count                                              |        |
+| `grandmcp_fixture_type_import`                                       | Import a catalog entry into the show (Share entries are downloaded first)                                                                                              | yes    |
+| `grandmcp_patch_plan`                                                | Work out FIDs and addresses for a fixture list and check every conflict. Changes nothing                                                                               |        |
+| `grandmcp_patch_plan_changes`                                        | Plan changes to existing fixtures: remove, new FID, rename, re-address or unpatch, new type or mode. Lists where removed or retyped fixtures are used. Changes nothing |        |
+| `grandmcp_patch_apply`                                               | Back up the patch, apply an add or change plan, commit, read back and verify                                                                                           | yes    |
+| `grandmcp_patch_move`                                                | Move fixtures under a grouping fixture or back to the top level; reports grandMA3's question for you to answer                                                         | yes    |
+| `grandmcp_patch_move_finish`                                         | Complete a move after you answered on the console                                                                                                                      | yes    |
+| `grandmcp_group_list`                                                | Groups in the current data pool with their fixture IDs                                                                                                                 |        |
+| `grandmcp_group_store`                                               | Create or replace a group with exactly these fixtures, in order                                                                                                        | yes    |
+| `grandmcp_group_delete`                                              | Delete a group (exported first)                                                                                                                                        | yes    |
+| `grandmcp_fixture_attributes`                                        | What a fixture type can do: attributes, channel functions, physical ranges, named slots (wheel positions, gel macros, strobe modes)                                    |        |
+| `grandmcp_preset_list`                                               | Presets per pool with their fixtures and attributes                                                                                                                    |        |
+| `grandmcp_preset_store`                                              | Create or replace a preset from values or effects per fixture, verified after import                                                                                   | yes    |
+| `grandmcp_sequence_list`                                             | Sequences with their cues, fade times and triggers                                                                                                                     |        |
+| `grandmcp_sequence_store`                                            | Create or replace a sequence whose cues reference presets and/or carry values, with timing and triggers                                                                | yes    |
+| `grandmcp_executor_list`                                             | What is assigned to the executors of a page                                                                                                                            |        |
+| `grandmcp_executor_assign`                                           | Put a sequence on an executor                                                                                                                                          | yes    |
+| `grandmcp_view3d`                                                    | Put grandMA3's 3D window on a screen (adds one if needed) and pick a camera                                                                                            | yes    |
+| `grandmcp_executor_configure`                                        | Fader function (Master, Temp, X, Rate, Speed, ...), button functions (Go+, Toggle, Flash, ...) and size of an executor                                                 | yes    |
+| `grandmcp_speedmaster_set`                                           | BPM and label of a speed master, optionally on an executor as a tap button                                                                                             | yes    |
+| `grandmcp_page_store`                                                | Create and name an executor page (for example one per music style)                                                                                                     | yes    |
+| `grandmcp_matricks_list`, `grandmcp_matricks_store`                  | MAtricks pool: blocks, groups, wings, width, shift, invert, phase/fade/delay spreads                                                                                   | store  |
+| `grandmcp_preset_read`, `grandmcp_sequence_read`                     | What a preset or sequence contains, in readable terms                                                                                                                  |        |
+| `grandmcp_cue_store`, `grandmcp_cue_delete`                          | Add, replace or delete a single cue without rewriting the sequence                                                                                                     | yes    |
+| `grandmcp_pool_copy`, `grandmcp_pool_rename`, `grandmcp_pool_delete` | Copy, rename or delete presets, sequences, groups and MAtricks (exported before delete or overwrite)                                                                   | yes    |
+| `grandmcp_appearance_list`, `grandmcp_appearance_store`              | Button colours, assigned to presets, sequences, groups or MAtricks                                                                                                     | store  |
+| `grandmcp_layout_list`, `grandmcp_layout_store`                      | 2D layout views of fixtures, placed explicitly or from the 3D positions                                                                                                | store  |
+| `grandmcp_screenshot`                                                | A screenshot of a grandMA3 screen, rendered by grandMA3 itself                                                                                                         |        |
+| `grandmcp_manual_search`, `grandmcp_manual_read`                     | Search and read the grandMA3 manual that ships with onPC                                                                                                               |        |
 
 The `patch_from_document` prompt walks Claude through a document-to-patch session, and `build_busking_show` through
 building groups, palettes, effects and executors for playing live, with you deciding the layout.
@@ -190,6 +199,17 @@ on executors. Everything is written as grandMA3 XML and imported, so the program
 **3D**: `grandmcp_patch_plan_changes` also sets fixture positions and rotations (`posX/posY/posZ` in metres,
 `rotX/rotY/rotZ` in degrees, for example `rotX: 180` for fixtures hanging from a truss). `grandmcp_view3d` puts the 3D
 window on a screen with a camera of your choice, and `grandmcp_screenshot` lets Claude look at it.
+
+**Playing it**: `grandmcp_executor_configure` sets what faders and buttons do (effect layers on Toggle or Flash, a
+Temp fader, ...), `grandmcp_speedmaster_set` sets BPM and puts speed masters on executors as tap buttons, and
+`grandmcp_page_store` makes a page per style. Effects take a `pattern` (blocks, groups, wings, invert) that lays the
+phase spread over the fixtures like MAtricks, for example a chase from the centre out; `grandmcp_matricks_store`
+stores MAtricks to call live on top of a group. `grandmcp_appearance_store` colours the buttons and
+`grandmcp_layout_store` builds a 2D map of the rig.
+
+**Changing it later**: `grandmcp_preset_read` and `grandmcp_sequence_read` show what is inside, `grandmcp_cue_store` /
+`grandmcp_cue_delete` edit single cues, and `grandmcp_pool_copy` / `_rename` / `_delete` manage pool objects. Replacing
+a sequence keeps it on its executors.
 
 Replacing a preset or sequence exports the old one to `gma3_library/datapools/presets` or `.../sequences` first.
 

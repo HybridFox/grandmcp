@@ -33,3 +33,30 @@ describe('cues', () => {
 		expect(cueSchema.safeParse({ looks: [{ preset: { pool: 4, no: 1 } }], trigger: 'later' }).success).toBe(false);
 	});
 });
+
+describe('read summaries', () => {
+	it('groups fixtures with identical values and names effects', async () => {
+		const { describePresetRead, describeSequenceRead } = await import('../src/tools/editing.ts');
+		const preset = describePresetRead({
+			pool: 1,
+			no: 4,
+			name: 'Wave',
+			fixtures: [
+				{ fid: 201, type: 'PL', values: { Dimmer: { effect: { bpm: 132, phase: 0, steps: [{ percent: 100 }, { percent: 10 }] } } } },
+				{ fid: 202, type: 'PL', values: { Color1: { slot: 'C3' } } },
+				{ fid: 203, type: 'PL', values: { Color1: { slot: 'C3' } } },
+			],
+		});
+
+		expect(preset).toContain('FID 201 PL: Dimmer effect 132 BPM, phase 0°: 100% > 10%');
+		expect(preset).toContain('FID 202, 203 PL: Color1 C3');
+		expect(
+			describeSequenceRead({
+				no: 20,
+				name: 'T',
+				executors: ['2.201'],
+				cues: [{ no: 1, name: 'a', fade: '1.00', presets: ['s4.1'], ownValueFixtures: [301] }],
+			}),
+		).toContain('1 "a" fade 1.00: preset s4.1; own values on FID 301');
+	});
+});

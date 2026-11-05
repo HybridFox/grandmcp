@@ -12,7 +12,7 @@ local myHandle = select(4, ...)
 local socket = require("socket")
 local json = require("json")
 
-local VERSION = "0.14.0"
+local VERSION = "0.20.0"
 local HOST = "127.0.0.1" -- unauthenticated: never bind beyond loopback
 local PORT = 9810
 local MAX_LINES_PER_TICK = 32
@@ -64,7 +64,7 @@ local function sanitize(v, depth)
 	end
 	if tv == "userdata" then return describeHandle(v) end
 	if tv ~= "table" then return "<" .. tv .. ">" end
-	if depth >= 8 then return "<max depth>" end
+	if depth >= 12 then return "<max depth>" end
 	local out = {}
 	if isArray(v) then
 		for i = 1, #v do out[i] = sanitize(v[i], depth + 1) end
@@ -1277,6 +1277,31 @@ ops["preset.list"] = function(args)
 	return out
 end
 
+-- Where fixture i (0-based) of n sits in a phase pattern, like MAtricks on one axis: blocks (neighbours share a step),
+-- groups (every n-th fixture shares a step), wings (the pattern mirrored across n wings), invert (reversed order).
+-- Returns the step index and the number of steps.
+local function patternIndex(i, n, pattern)
+	local idx, count = i, n
+	local blocks = math.max(1, math.tointeger(pattern.blocks) or 1)
+	if blocks > 1 then
+		idx, count = idx // blocks, math.ceil(count / blocks)
+	end
+	local groups = math.max(1, math.tointeger(pattern.groups) or 1)
+	if groups > 1 then
+		idx, count = idx % groups, math.min(groups, count)
+	end
+	local wings = math.max(1, math.tointeger(pattern.wings) or 1)
+	if wings > 1 then
+		local per = math.ceil(count / wings)
+		local wing = idx // per
+		local pos = idx % per
+		if wing % 2 == 1 then pos = per - 1 - pos end
+		idx, count = pos, per
+	end
+	if pattern.invert then idx = count - 1 - idx end
+	return idx, count
+end
+
 -- args: { pool, no, name, overwrite, entries = [{ fids = [...], values = { <attribute> = value } }] }
 ops["preset.store"] = function(args)
 	local pool = poolOf(args.pool)
@@ -1334,7 +1359,8 @@ ops["preset.store"] = function(args)
 							if bpm <= 0 or bpm > 3000 then fail("bad-value", label .. ": bpm must be between 0 and 3000") end
 							local spread = type(eff.phase) == "table" and eff.phase or {}
 							local from, to = tonumber(spread.from) or 0, tonumber(spread.to) or 0
-							local phase = from + (to - from) * (entryIndex - 1) / math.max(1, entryCount)
+							local slot, slots = patternIndex(entryIndex - 1, entryCount, type(eff.pattern) == "table" and eff.pattern or {})
+							local phase = from + (to - from) * slot / math.max(1, slots)
 							local stepXml, stepRanges = {}, {}
 							for si, step in ipairs(eff.steps) do
 								local r = resolveValue(map[attr], step, label .. " step " .. si)
@@ -1344,9 +1370,10 @@ ops["preset.store"] = function(args)
 								stepRanges[si] = { min = r.dmxMin, max = r.dmxMax }
 							end
 							return {
-								-- SpeedMaster takes the master's name ("Speed1"); a bare number is misread as an index.
+								-- SpeedMaster is a reference by the master's current name ("Speed1", or its label once renamed);
+								-- a bare number is misread as an index.
 								xml = string.format('            <Phaser IDType="0" ID="%d" Attribute="%s" Speed="%d" SpeedMaster="%s" Phase="%s" Measure="16777216" GridPos="%d" GridPosMatr="%d" Selective="Selective">%s</Phaser>',
-									fid, xmlEscape(attr), math.floor(bpm / 60 * 16777216 + 0.5), master and ("Speed" .. master) or "None", string.format("%.4f", phase), gridPos, gridPos, table.concat(stepXml)),
+									fid, xmlEscape(attr), math.floor(bpm / 60 * 16777216 + 0.5), master and xmlEscape(MasterPool().Speed[master].name) or "None", string.format("%.4f", phase), gridPos, gridPos, table.concat(stepXml)),
 								effect = { fid = fid, attribute = attr, speed = bpm / 60, phase = phase % 360, steps = stepRanges, master = master },
 							}
 						end)
@@ -1455,7 +1482,8 @@ ops["preset.store"] = function(args)
 	end
 	local exported = #effects > 0 and exportText(p) or ""
 	for _, e in ipairs(effects) do
-		if e.master and not exported:find(string.format('ID="%d" Attribute="%s"[^>]-SpeedMaster="Speed%d"', e.fid, e.attribute, e.master)) then
+		local masterName = e.master and xmlEscape(MasterPool().Speed[e.master].name):gsub("%p", "%%%0")
+		if e.master and not exported:find(string.format('ID="%d" Attribute="%s"[^>]-SpeedMaster="%s"', e.fid, e.attribute, masterName)) then
 			mismatches[#mismatches + 1] = string.format("FID %d %s: not linked to speed master %d", e.fid, e.attribute, e.master)
 		end
 		local v = byFixture[e.fid] or byFixture[tostring(e.fid)]
@@ -1487,6 +1515,35 @@ end
 ---------------------------------------------------------------------------
 
 local TRIGGERS = { go = "Go", follow = "Follow", time = "Time" }
+
+-- The executor whose area covers slot `exec` on a page: wide executors (Width > 1) also cover the slots to their right.
+local function coveringExecutor(page, exec)
+	local p = DataPool().Pages[page]
+	for _, e in ipairs(p and p:Children() or {}) do
+		local no = tonumber(tostring(display(e, "No")):match("^%d+"))
+		local width = tonumber(display(e, "Width")) or 1
+		if no and exec >= no and exec < no + width then return e, no end
+	end
+	return nil
+end
+
+-- Every executor (all pages) that holds this object, with its configuration, so it can be restored.
+local function executorsHolding(obj)
+	local found = {}
+	for _, p in ipairs(DataPool().Pages:Children()) do
+		local page = tonumber(tostring(display(p, "No")):match("^%d+"))
+		for _, e in ipairs(p:Children()) do
+			if e:Get("Object") == obj then
+				found[#found + 1] = {
+					page = page, exec = tonumber(tostring(display(e, "No")):match("^%d+")),
+					Fader = display(e, "Fader"), KeyPress = display(e, "KeyPress"), KeyUnpress = display(e, "KeyUnpress"),
+					Width = display(e, "Width"), Height = display(e, "Height"),
+				}
+			end
+		end
+	end
+	return found
+end
 
 local function presetLookPhasers(look, live, maps, problems, phasers)
 	local poolNo, presetNo = math.tointeger(look.preset.pool), math.tointeger(look.preset.no)
@@ -1641,6 +1698,7 @@ ops["sequence.store"] = function(args)
 	if #problems > 0 then fail("bad-value", table.concat(problems, "; ")) end
 
 	local backup
+	local holders = {}
 	if existing then
 		guardIdle()
 		local sep = GetPathSeparator()
@@ -1648,7 +1706,9 @@ ops["sequence.store"] = function(args)
 		CreateDirectoryRecursive(dir)
 		local file = string.format("grandmcp-backup-%s-sequence%d.xml", os.date("%Y%m%d-%H%M%S"), no)
 		if existing:Export(dir, file) then backup = dir .. sep .. file end
-		-- Replace by recreating: importing over an existing sequence keeps leftovers (e.g. CueZero timing).
+		-- Replace by recreating: importing over an existing sequence merges cue by cue position. Deleting the sequence
+		-- also empties the executors holding it, so remember them and put it back afterwards.
+		holders = executorsHolding(existing)
 		CmdIndirect(string.format("Delete Sequence %d /NoConfirmation", no))
 		local t0 = socket.gettime()
 		repeat
@@ -1681,6 +1741,21 @@ ops["sequence.store"] = function(args)
 	if not okImport or not imported then fail("import-failed", "MA could not import the sequence") end
 
 	s = pool[no]
+	local restored = {}
+	for _, h in ipairs(holders) do
+		CmdIndirect(string.format("Assign Sequence %d At Page %d.%d", no, h.page, h.exec))
+		local t0, e = socket.gettime(), nil
+		repeat
+			coroutine.yield(0.05)
+			e = coveringExecutor(h.page, h.exec)
+		until (e and e:Get("Object") == pool[no]) or socket.gettime() - t0 > 3
+		if e and e:Get("Object") == pool[no] then
+			for _, prop in ipairs({ "Width", "Height", "Fader", "KeyPress", "KeyUnpress" }) do
+				if h[prop] and h[prop] ~= "" then pcall(e.Set, e, prop, h[prop]) end
+			end
+			restored[#restored + 1] = string.format("%d.%d", h.page, h.exec)
+		end
+	end
 	local cues = {}
 	for _, c in ipairs(s:Children()) do
 		local info = cueInfo(c)
@@ -1688,8 +1763,8 @@ ops["sequence.store"] = function(args)
 	end
 	local text = exportText(s) or ""
 	local _, phaserCount = text:gsub("<Phaser ", "")
-	local verified = #cues == #args.cues and phaserCount >= expectedPhasers
-	return { no = no, name = s.name, cues = cues, values = phaserCount, expectedValues = expectedPhasers, verified = verified, backup = backup }
+	local verified = #cues == #args.cues and phaserCount >= expectedPhasers and #restored == #holders
+	return { no = no, name = s.name, cues = cues, values = phaserCount, expectedValues = expectedPhasers, verified = verified, backup = backup, executors = restored, executorsLost = #holders - #restored }
 end
 
 -- args: { sequence, page, executor }
@@ -1698,26 +1773,18 @@ ops["executor.assign"] = function(args)
 	if not seqNo or not page or not exec then fail("bad-args", "sequence, page and executor must be integers") end
 	if not DataPool().Sequences[seqNo] then fail("not-found", "no sequence " .. seqNo) end
 	guardIdle()
-	-- MA silently replaces whatever is on the executor, so only do that when asked.
-	for _, e in ipairs(DataPool().Pages[page] and DataPool().Pages[page]:Children() or {}) do
-		if tonumber(tostring(display(e, "No")):match("^%d+")) == exec then
-			local obj = e:Get("Object")
-			if obj and obj ~= DataPool().Sequences[seqNo] and not args.overwrite then
-				fail("exists", string.format("executor %d.%d already holds %s '%s'; pass overwrite to replace it", page, exec, obj:GetClass(), tostring(obj.name)))
-			end
-		end
+	-- MA silently replaces whatever is on the executor (or on the wide executor covering this slot), so only when asked.
+	local cover, coverNo = coveringExecutor(page, exec)
+	local obj = cover and cover:Get("Object")
+	if obj and obj ~= DataPool().Sequences[seqNo] and not args.overwrite then
+		local where = coverNo ~= exec and string.format(" (slot %d is part of the wide executor %d)", exec, coverNo) or ""
+		fail("exists", string.format("executor %d.%d already holds %s '%s'%s; pass overwrite to replace it", page, coverNo, obj:GetClass(), tostring(obj.name), where))
 	end
 	CmdIndirect(string.format("Assign Sequence %d At Page %d.%d", seqNo, page, exec))
-	-- Page children are the executors that exist, so find the one with this number (not the n-th child).
 	local function assigned()
-		local p = DataPool().Pages[page]
-		for _, e in ipairs(p and p:Children() or {}) do
-			if tonumber(tostring(display(e, "No")):match("^%d+")) == exec then
-				local obj = e:Get("Object")
-				return obj ~= nil and obj == DataPool().Sequences[seqNo]
-			end
-		end
-		return false
+		local e = coveringExecutor(page, exec)
+		local o = e and e:Get("Object")
+		return o ~= nil and o == DataPool().Sequences[seqNo]
 	end
 	local t0 = socket.gettime()
 	repeat
@@ -1728,18 +1795,121 @@ ops["executor.assign"] = function(args)
 	return { sequence = seqNo, page = page, executor = exec, name = DataPool().Sequences[seqNo].name }
 end
 
+local function findExecutor(page, exec)
+	local p = DataPool().Pages[page]
+	for _, e in ipairs(p and p:Children() or {}) do
+		if tonumber(tostring(display(e, "No")):match("^%d+")) == exec then return e end
+	end
+	return nil
+end
+
+local function executorInfo(e)
+	local obj = e:Get("Object")
+	return {
+		executor = tonumber(tostring(display(e, "No")):match("^%d+")),
+		class = obj and obj:GetClass() or nil,
+		name = obj and obj.name or nil,
+		no = obj and tonumber(tostring(display(obj, "No") or ""):match("^%d+")) or nil,
+		fader = display(e, "Fader"),
+		button = display(e, "KeyPress"),
+		release = display(e, "KeyUnpress"),
+		width = tonumber(display(e, "Width")),
+		height = tonumber(display(e, "Height")),
+	}
+end
+
 -- args: { page } -> executors on the page that have something assigned.
 ops["executor.list"] = function(args)
 	local page = math.tointeger(args.page) or 1
 	local p = DataPool().Pages[page]
+	if not p then fail("not-found", "no page " .. page) end
 	local out = {}
-	for _, e in ipairs(p and p:Children() or {}) do
-		local obj = e:Get("Object")
-		if obj then
-			out[#out + 1] = { executor = tonumber(tostring(display(e, "No")):match("^%d+")), class = obj:GetClass(), name = obj.name, no = tonumber(tostring(display(obj, "No")):match("^%d+")) }
+	for _, e in ipairs(p:Children()) do
+		if e:Get("Object") then out[#out + 1] = executorInfo(e) end
+	end
+	return { page = page, name = p.name, executors = out }
+end
+
+-- args: { page, executor, fader?, button?, release?, width?, height? }
+ops["executor.configure"] = function(args)
+	local page, exec = math.tointeger(args.page) or 1, math.tointeger(args.executor)
+	local e = exec and findExecutor(page, exec)
+	if not e or not e:Get("Object") then fail("not-found", string.format("executor %d.%s has nothing assigned", page, tostring(args.executor))) end
+	local problems = {}
+	for key, prop in pairs({ fader = "Fader", button = "KeyPress", release = "KeyUnpress", width = "Width", height = "Height" }) do
+		local value = args[key]
+		if value ~= nil then
+			local old = display(e, prop)
+			local ok = pcall(e.Set, e, prop, tostring(value))
+			local now = display(e, prop)
+			if not ok or tostring(now):lower() ~= tostring(value):lower() then
+				problems[#problems + 1] = string.format("%s '%s' was not accepted (still '%s')", key, tostring(value), tostring(now))
+				pcall(e.Set, e, prop, old)
+			end
 		end
 	end
-	return { page = page, executors = out }
+	if #problems > 0 then fail("bad-value", table.concat(problems, "; ")) end
+	return executorInfo(e)
+end
+
+-- args: { master (1-16), bpm?, label?, page?, executor?, overwrite? } -> sets a speed master and optionally puts it on
+-- an executor (grandMA3 then makes its button a tap: LearnSpeed).
+ops["speedmaster.set"] = function(args)
+	local no = math.tointeger(args.master)
+	if not no or no < 1 or no > 16 then fail("bad-args", "master must be 1-16") end
+	local sm = MasterPool().Speed[no]
+	guardIdle()
+	local function run(command)
+		CmdIndirect(command)
+		local t0, last = socket.gettime(), nil
+		repeat
+			coroutine.yield(0.05)
+			if GetTopModal() ~= nil then failModal("a pop-up opened during: " .. command) end
+			last = display(CmdObj(), "LastCommand") or ""
+		until last:find(command, 1, true) or socket.gettime() - t0 > 3
+		if not last:find("^OK") then fail("command-failed", command .. ": " .. tostring(last)) end
+	end
+	if args.bpm ~= nil then
+		local bpm = tonumber(args.bpm)
+		if not bpm or bpm <= 0 or bpm > 3000 then fail("bad-args", "bpm must be between 0 and 3000") end
+		run(string.format("Master 3.%d At BPM %s", no, tostring(bpm)))
+	end
+	if args.label ~= nil then
+		if type(args.label) ~= "string" or args.label == "" or args.label:find('"', 1, true) then fail("bad-args", "label must be a non-empty string without quotes") end
+		run(string.format('Label Master 3.%d "%s"', no, args.label))
+	end
+	local placed
+	if args.executor ~= nil then
+		local page, exec = math.tointeger(args.page) or 1, math.tointeger(args.executor)
+		local e, coverNo = coveringExecutor(page, exec)
+		local current = e and e:Get("Object")
+		if current and current ~= sm and not args.overwrite then
+			local where = coverNo ~= exec and string.format(" (slot %d is part of the wide executor %d)", exec, coverNo) or ""
+			fail("exists", string.format("executor %d.%d already holds %s '%s'%s; pass overwrite to replace it", page, coverNo, current:GetClass(), tostring(current.name), where))
+		end
+		run(string.format("Assign Master 3.%d At Page %d.%d", no, page, exec))
+		e = coveringExecutor(page, exec)
+		placed = e and executorInfo(e)
+	end
+	return { master = no, name = sm.name, fader = display(sm, "NormedValue"), executor = placed }
+end
+
+-- args: { no, name } -> creates the page if needed and names it.
+ops["page.store"] = function(args)
+	local no = math.tointeger(args.no)
+	if not no or no < 1 or no > 9999 then fail("bad-args", "page must be 1-9999") end
+	if type(args.name) ~= "string" or args.name == "" or args.name:find('"', 1, true) then fail("bad-args", "name must be a non-empty string without quotes") end
+	guardIdle()
+	if not DataPool().Pages[no] then CmdIndirect(string.format("Store Page %d", no)) end
+	CmdIndirect(string.format('Label Page %d "%s"', no, args.name))
+	local t0 = socket.gettime()
+	repeat
+		coroutine.yield(0.05)
+		if GetTopModal() ~= nil then failModal("a pop-up opened while storing page " .. no) end
+	until (DataPool().Pages[no] and DataPool().Pages[no].name == args.name) or socket.gettime() - t0 > 3
+	local p = DataPool().Pages[no]
+	if not p or p.name ~= args.name then fail("page-failed", "page " .. no .. " was not created or named") end
+	return { no = no, name = p.name }
 end
 
 ---------------------------------------------------------------------------
@@ -1828,6 +1998,405 @@ ops["view3d"] = function(args)
 		settings.Camera = cam -- a reference property: assign the object, a string is ignored
 	end
 	return { screen = screen, created = created, camera = display(settings, "Camera"), cameras = cameras }
+end
+
+local MATRICKS_FIELDS = {
+	block = "XBlock", group = "XGroup", wings = "XWings", width = "XWidth", shift = "XShift",
+	phaseFrom = "PhaseFromX", phaseTo = "PhaseToX", fadeFrom = "FadeFromX", fadeTo = "FadeToX",
+	delayFrom = "DelayFromX", delayTo = "DelayToX",
+}
+
+local function matricksInfo(m)
+	local info = { no = tonumber(tostring(display(m, "No")):match("^%d+")), name = m.name }
+	for key, prop in pairs(MATRICKS_FIELDS) do
+		local v = display(m, prop)
+		if v and v ~= "" and v ~= "None" then info[key] = tonumber(tostring(v):match("(-?[%d%.]+)")) end
+	end
+	info.invert = display(m, "XInv") == "Yes"
+	return info
+end
+
+ops["matricks.list"] = function()
+	local out = {}
+	for _, m in ipairs(DataPool().MAtricks:Children()) do out[#out + 1] = matricksInfo(m) end
+	return out
+end
+
+-- args: { no, name, overwrite, block?, group?, wings?, width?, shift?, invert?, phaseFrom?, phaseTo?, fadeFrom?, ... }
+ops["matricks.store"] = function(args)
+	local no = groupNo(args.no)
+	if type(args.name) ~= "string" or args.name == "" or #args.name > 100 then fail("bad-args", "name must be a non-empty string") end
+	local pool = DataPool().MAtricks
+	local m = pool[no]
+	if m and not args.overwrite then fail("exists", string.format("MAtricks %d already exists ('%s'); pass overwrite to replace it", no, tostring(m.name))) end
+	m = m or pool:Create(no)
+	if not m then fail("store-failed", "could not create MAtricks " .. no) end
+	-- Start from a clean MAtricks so earlier settings do not linger.
+	for _, prop in pairs(MATRICKS_FIELDS) do pcall(m.Set, m, prop, "None") end
+	pcall(m.Set, m, "XInv", "No")
+	pcall(m.Set, m, "Name", args.name)
+	local problems = {}
+	for key, prop in pairs(MATRICKS_FIELDS) do
+		if args[key] ~= nil then
+			pcall(m.Set, m, prop, tostring(args[key]))
+			local have = tonumber(tostring(display(m, prop) or ""):match("(-?[%d%.]+)"))
+			if have == nil or math.abs(have - tonumber(args[key])) > 0.01 then
+				problems[#problems + 1] = string.format("%s %s was not accepted (now %s)", key, tostring(args[key]), tostring(display(m, prop)))
+			end
+		end
+	end
+	if args.invert then pcall(m.Set, m, "XInv", "Yes") end
+	if #problems > 0 then fail("bad-value", table.concat(problems, "; ")) end
+	return matricksInfo(pool[no])
+end
+
+---------------------------------------------------------------------------
+-- Editing existing objects: single cues, delete / copy / rename, and reading contents back in readable form.
+---------------------------------------------------------------------------
+
+local function runCommand(command, done, timeout)
+	CmdIndirect(command)
+	local t0 = socket.gettime()
+	repeat
+		coroutine.yield(0.05)
+		if GetTopModal() ~= nil then failModal("a pop-up opened during: " .. command) end
+	until done() or socket.gettime() - t0 > (timeout or 4)
+	if not done() then fail("command-failed", command .. " (" .. tostring(display(CmdObj(), "LastCommand")) .. ")") end
+end
+
+local function findCue(seq, cueNo)
+	for _, c in ipairs(seq:Children()) do
+		local no = tonumber((display(c, "No") or ""):match("[%d%.]+") or "")
+		if no and math.abs(no - cueNo) < 0.0005 then return c end
+	end
+	return nil
+end
+
+local function exportBackup(obj, folder, label)
+	local sep = GetPathSeparator()
+	local dir = GetPath(Enums.PathType.Library) .. sep .. "datapools" .. sep .. folder
+	CreateDirectoryRecursive(dir)
+	local file = string.format("grandmcp-backup-%s-%s.xml", os.date("%Y%m%d-%H%M%S"), label)
+	if obj:Export(dir, file) then return dir .. sep .. file end
+	return nil
+end
+
+-- args: { sequence, cue = <cue as in sequence.store>, overwrite } -> builds the cue in a scratch sequence and copies it
+-- into place, so the target sequence keeps its identity (and its executors).
+ops["cue.store"] = function(args)
+	local seqNo = math.tointeger(args.sequence)
+	local seq = seqNo and DataPool().Sequences[seqNo]
+	if not seq then fail("not-found", "no sequence " .. tostring(args.sequence)) end
+	if type(args.cue) ~= "table" then fail("bad-args", "cue must be an object") end
+	local cueNo = tonumber(args.cue.no)
+	if not cueNo or cueNo <= 0 then fail("bad-args", "cue.no must be a positive number") end
+	local existing = findCue(seq, cueNo)
+	if existing and not args.overwrite then fail("exists", string.format("sequence %d already has cue %s ('%s'); pass overwrite to replace it", seqNo, tostring(cueNo), tostring(existing.name))) end
+	guardIdle()
+	local pool = DataPool().Sequences
+	local scratch
+	for n = 999, 900, -1 do
+		if not pool[n] then
+			scratch = n
+			break
+		end
+	end
+	if not scratch then fail("busy", "no free scratch sequence slot (900-999)") end
+	local backup = existing and exportBackup(seq, "sequences", "sequence" .. seqNo)
+	ops["sequence.store"]({ no = scratch, name = "grandmcp scratch", cues = { args.cue } })
+	local ok, err = pcall(runCommand, string.format("Copy Sequence %d Cue %s At Sequence %d Cue %s /Overwrite /NoConfirmation", scratch, tostring(cueNo), seqNo, tostring(cueNo)),
+		function() return (display(CmdObj(), "LastCommand") or ""):find("^OK: Copy") ~= nil end)
+	pcall(runCommand, string.format("Delete Sequence %d /NoConfirmation", scratch), function() return pool[scratch] == nil end)
+	if not ok then error(err, 0) end
+	local cue = findCue(DataPool().Sequences[seqNo], cueNo)
+	if not cue then fail("verify-failed", "cue " .. tostring(cueNo) .. " is not in sequence " .. seqNo .. " after the copy") end
+	return { sequence = seqNo, cue = cueInfo(cue), replaced = existing ~= nil, backup = backup }
+end
+
+-- args: { sequence, cue }
+ops["cue.delete"] = function(args)
+	local seqNo, cueNo = math.tointeger(args.sequence), tonumber(args.cue)
+	local seq = seqNo and DataPool().Sequences[seqNo]
+	if not seq then fail("not-found", "no sequence " .. tostring(args.sequence)) end
+	if not cueNo or not findCue(seq, cueNo) then fail("not-found", "sequence " .. seqNo .. " has no cue " .. tostring(args.cue)) end
+	guardIdle()
+	local backup = exportBackup(seq, "sequences", "sequence" .. seqNo)
+	runCommand(string.format("Delete Sequence %d Cue %s /NoConfirmation", seqNo, tostring(cueNo)), function() return findCue(DataPool().Sequences[seqNo], cueNo) == nil end)
+	return { sequence = seqNo, cue = cueNo, backup = backup }
+end
+
+-- kind = preset | sequence | group | matricks; preset addresses are "<pool>.<no>".
+local POOL_KINDS = {
+	preset = { keyword = "Preset", folder = "presets", get = function(a) local p = DataPool().PresetPools[math.tointeger(a.pool) or -1]; return p and p[math.tointeger(a.no) or -1] end },
+	sequence = { keyword = "Sequence", folder = "sequences", get = function(a) return DataPool().Sequences[math.tointeger(a.no) or -1] end },
+	group = { keyword = "Group", folder = "groups", get = function(a) return DataPool().Groups[math.tointeger(a.no) or -1] end },
+	matricks = { keyword = "MAtricks", folder = "matricks", get = function(a) return DataPool().MAtricks[math.tointeger(a.no) or -1] end },
+}
+
+local function poolRef(kind, a, no)
+	local k = POOL_KINDS[kind]
+	if not k then fail("bad-args", "kind must be preset, sequence, group or matricks") end
+	if kind == "preset" then return string.format("%s %d.%d", k.keyword, math.tointeger(a.pool) or 0, math.tointeger(no) or 0), k end
+	return string.format("%s %d", k.keyword, math.tointeger(no) or 0), k
+end
+
+-- args: { kind, pool?, no }
+ops["pool.delete"] = function(args)
+	local ref, k = poolRef(args.kind, args, args.no)
+	local obj = k.get(args)
+	if not obj then fail("not-found", "no " .. ref) end
+	guardIdle()
+	local name = obj.name
+	local backup = exportBackup(obj, k.folder, (ref:gsub("%s", ""):gsub("%.", "-")))
+	runCommand("Delete " .. ref .. " /NoConfirmation", function() return k.get(args) == nil end)
+	return { deleted = ref, name = name, backup = backup }
+end
+
+-- args: { kind, pool?, from, to, overwrite }
+ops["pool.copy"] = function(args)
+	local fromRef, k = poolRef(args.kind, args, args.from)
+	local toRef = poolRef(args.kind, args, args.to)
+	local src = k.get({ pool = args.pool, no = args.from })
+	if not src then fail("not-found", "no " .. fromRef) end
+	local dst = k.get({ pool = args.pool, no = args.to })
+	if dst and not args.overwrite then fail("exists", toRef .. " already exists ('" .. tostring(dst.name) .. "'); pass overwrite to replace it") end
+	guardIdle()
+	local backup = dst and exportBackup(dst, k.folder, (toRef:gsub("%s", ""):gsub("%.", "-")))
+	runCommand(string.format("Copy %s At %s /Overwrite /NoConfirmation", fromRef, toRef), function() return k.get({ pool = args.pool, no = args.to }) ~= nil and (display(CmdObj(), "LastCommand") or ""):find("^OK") ~= nil end)
+	return { copied = fromRef, to = toRef, name = k.get({ pool = args.pool, no = args.to }).name, backup = backup }
+end
+
+-- args: { kind, pool?, no, name }
+ops["pool.rename"] = function(args)
+	local ref, k = poolRef(args.kind, args, args.no)
+	if not k.get(args) then fail("not-found", "no " .. ref) end
+	if type(args.name) ~= "string" or args.name == "" or args.name:find('"', 1, true) then fail("bad-args", "name must be a non-empty string without quotes") end
+	guardIdle()
+	runCommand(string.format('Label %s "%s"', ref, args.name), function() return k.get(args) and k.get(args).name == args.name end)
+	return { renamed = ref, name = k.get(args).name }
+end
+
+-- DMX value of one attribute -> readable: the slot it falls in, else percent of its function (and physical value).
+local function describeDmx(map, attr, dmx, fnIndex)
+	local entry = map[attr]
+	if not entry then return { dmx = dmx } end
+	local fn = entry.functions[(fnIndex or 0) + 1] or entry.functions[1]
+	for _, f in ipairs(entry.functions) do
+		for _, slot in ipairs(f.slots) do
+			if dmx >= slot.dmxFrom and dmx <= slot.dmxTo and slot.dmxFrom ~= slot.dmxTo then return { slot = slot.name, ["function"] = f.name } end
+		end
+		if dmx >= (f.dmxFrom or 0) and dmx <= (f.dmxTo or 0) then fn = f end
+	end
+	if not fn then return { dmx = dmx } end
+	local span = (fn.dmxTo or 0) - (fn.dmxFrom or 0)
+	local pct = span > 0 and (dmx - fn.dmxFrom) / span * 100 or 0
+	return { percent = math.floor(pct * 10 + 0.5) / 10, physical = math.floor(dmxToPhys(fn, dmx) * 1000 + 0.5) / 1000, ["function"] = fn.name }
+end
+
+-- args: { pool, no } -> per fixture and attribute: value, or effect steps/speed/phase.
+ops["preset.read"] = function(args)
+	local pool = poolOf(args.pool)
+	local p = pool[math.tointeger(args.no) or -1]
+	if not p then fail("not-found", "no preset " .. tostring(args.pool) .. "." .. tostring(args.no)) end
+	local okData, data = pcall(GetPresetData, p)
+	local byFixture = okData and type(data) == "table" and data.by_fixtures or {}
+	local live, maps, out = ShowData().LivePatch, {}, {}
+	for fidKey, attrs in pairs(byFixture) do
+		local fid = math.tointeger(tonumber(fidKey))
+		local f = fid and findFixture(live, fid)
+		local mode = f and f:Get("ModeDirect")
+		local key = mode and mode:ToAddr() or "?"
+		maps[key] = maps[key] or (mode and attributeMap(mode)) or {}
+		local values = {}
+		for attr, v in pairs(attrs) do
+			if type(v) == "table" and v[1] then
+				local steps = {}
+				for i = 1, 48 do
+					if type(v[i]) ~= "table" then break end
+					steps[i] = describeDmx(maps[key], attr, math.min(v[i].absolute_value or 0, 0xFFFFFF), v[i].channel_function)
+					if v[i + 1] then steps[i].width = v[i].width; steps[i].trans = v[i].trans end
+				end
+				if #steps > 1 then
+					values[attr] = { effect = { steps = steps, bpm = math.floor((tonumber(v.speed) or 0) * 600 + 0.5) / 10, phase = math.floor((tonumber(v.phase) or 0) * 10 + 0.5) / 10 } }
+				else
+					values[attr] = steps[1]
+				end
+			end
+		end
+		out[#out + 1] = { fid = fid, type = f and f:Get("FixtureType") and f:Get("FixtureType").name, values = values }
+	end
+	table.sort(out, function(a, b) return (a.fid or 0) < (b.fid or 0) end)
+	return { pool = math.tointeger(args.pool), no = math.tointeger(args.no), name = p.name, fixtures = out }
+end
+
+-- args: { no } -> cues with timing and what they contain: referenced presets and fixtures with own values.
+ops["sequence.read"] = function(args)
+	local no = math.tointeger(args.no)
+	local seq = no and DataPool().Sequences[no]
+	if not seq then fail("not-found", "no sequence " .. tostring(args.no)) end
+	local text = exportText(seq) or ""
+	local cues = {}
+	-- Cue elements in export order: OffCue, CueZero, then the real cues.
+	for cueXml in text:gmatch("<Cue .-</Cue>") do
+		local cueNo = tonumber(cueXml:match('^<Cue[^>]-No="%s*([%d%.]+)"') or "")
+		if cueNo and cueNo > 0 then
+			-- Skip embedded preset copies (DependencyExport): only the cue's own PresetData counts.
+			local own = cueXml:gsub("<DependencyExport.-</DependencyExport>", "")
+			local presets, fixtures, ownValues = {}, {}, 0
+			for phaser in own:gmatch("<Phaser [^>]*>") do
+				local ref = phaser:match('AbsPreset="([^"]*)"')
+				local fid = tonumber(phaser:match('ID="(%d+)"') or "")
+				if ref then
+					presets[ref:gsub("&apos;", "'")] = true
+				elseif fid then
+					fixtures[fid] = true
+					ownValues = ownValues + 1
+				end
+			end
+			local presetList, fidList = {}, {}
+			for ref in pairs(presets) do presetList[#presetList + 1] = ref end
+			for fid in pairs(fixtures) do fidList[#fidList + 1] = fid end
+			table.sort(presetList)
+			table.sort(fidList)
+			local info = cueInfo(findCue(seq, cueNo) or seq)
+			info.no = cueNo
+			info.presets = presetList
+			info.ownValueFixtures = fidList
+			info.ownValues = ownValues
+			cues[#cues + 1] = info
+		end
+	end
+	return { no = no, name = seq.name, cues = cues, executors = (function()
+		local list = {}
+		for _, h in ipairs(executorsHolding(seq)) do list[#list + 1] = string.format("%d.%d", h.page, h.exec) end
+		return list
+	end)() }
+end
+
+---------------------------------------------------------------------------
+-- Appearances: button colours for pool objects, so a busking layout reads at a glance.
+---------------------------------------------------------------------------
+
+local function appearanceInfo(a)
+	return { no = tonumber(tostring(display(a, "No")):match("^%d+")), name = a.name, color = "#" .. tostring(display(a, "BackRGBA") or ""):sub(1, 6) }
+end
+
+ops["appearance.list"] = function()
+	local out = {}
+	for _, a in ipairs(ShowData().Appearances:Children()) do out[#out + 1] = appearanceInfo(a) end
+	return out
+end
+
+-- args: { no, name, color = "#RRGGBB", overwrite, assign = [{ kind, pool?, no }] }
+ops["appearance.store"] = function(args)
+	local no = groupNo(args.no)
+	if type(args.name) ~= "string" or args.name == "" or #args.name > 100 then fail("bad-args", "name must be a non-empty string") end
+	local hexColor = tostring(args.color or ""):match("^#?(%x%x%x%x%x%x)$")
+	if not hexColor then fail("bad-args", 'color must be "#RRGGBB"') end
+	local pool = ShowData().Appearances
+	local a = pool[no]
+	if a and not args.overwrite then fail("exists", string.format("appearance %d already exists ('%s'); pass overwrite to replace it", no, tostring(a.name))) end
+	a = a or pool:Create(no)
+	if not a then fail("store-failed", "could not create appearance " .. no) end
+	a:Set("Name", args.name)
+	a:Set("BackR", tostring(tonumber(hexColor:sub(1, 2), 16)))
+	a:Set("BackG", tostring(tonumber(hexColor:sub(3, 4), 16)))
+	a:Set("BackB", tostring(tonumber(hexColor:sub(5, 6), 16)))
+	a:Set("BackAlpha", "255")
+	local assigned, problems = {}, {}
+	for _, target in ipairs(type(args.assign) == "table" and args.assign or {}) do
+		local okRef, ref, k = pcall(poolRef, target.kind, target, target.no)
+		local obj = okRef and k.get(target)
+		if not obj then
+			problems[#problems + 1] = "no " .. (okRef and ref or tostring(target.kind))
+		else
+			obj.Appearance = a -- a reference property: assign the object
+			if obj:Get("Appearance") == a then assigned[#assigned + 1] = ref else problems[#problems + 1] = "could not assign to " .. ref end
+		end
+	end
+	local info = appearanceInfo(pool[no])
+	info.assigned = assigned
+	info.problems = problems
+	return info
+end
+
+---------------------------------------------------------------------------
+-- Layouts: a 2D map of fixtures (clickable, drives selection), placed explicitly or from the 3D positions.
+---------------------------------------------------------------------------
+
+local function layoutInfo(l)
+	local elements = {}
+	for _, e in ipairs(l:Children()) do
+		local obj = e:Get("Object")
+		elements[#elements + 1] = {
+			fid = obj and tonumber(display(obj, "FID") or ""),
+			x = tonumber(display(e, "PosX")), y = tonumber(display(e, "PosY")),
+			width = tonumber(display(e, "Width")), height = tonumber(display(e, "Height")),
+		}
+	end
+	return { no = tonumber(tostring(display(l, "No")):match("^%d+")), name = l.name, elements = elements }
+end
+
+ops["layout.list"] = function()
+	local out = {}
+	for _, l in ipairs(DataPool().Layouts:Children()) do
+		out[#out + 1] = { no = tonumber(tostring(display(l, "No")):match("^%d+")), name = l.name, elements = l:Count() }
+	end
+	return out
+end
+
+-- args: { no, name, overwrite, elements = [{ fid, x?, y?, width?, height? }], scale? } -> elements without x/y are
+-- placed from the fixture's 3D position seen from above (x = PosX, y = PosY, scale layout units per metre).
+ops["layout.store"] = function(args)
+	local no = groupNo(args.no)
+	if type(args.name) ~= "string" or args.name == "" or args.name:find('"', 1, true) then fail("bad-args", "name must be a non-empty string without quotes") end
+	if type(args.elements) ~= "table" or #args.elements == 0 then fail("bad-args", "elements must be a non-empty array") end
+	local live = ShowData().LivePatch
+	local wanted, fids = {}, {}
+	for _, el in ipairs(args.elements) do
+		local fid = math.tointeger(el.fid)
+		if not fid or not findFixture(live, fid) then fail("not-found", "no fixture with FID " .. tostring(el.fid)) end
+		if wanted[fid] then fail("bad-args", "FID " .. fid .. " is listed twice") end
+		wanted[fid] = el
+		fids[#fids + 1] = tostring(fid)
+	end
+	local pool = DataPool().Layouts
+	local existing = pool[no]
+	if existing and not args.overwrite then fail("exists", string.format("layout %d already exists ('%s'); pass overwrite to replace it", no, tostring(existing.name))) end
+	guardIdle()
+	local backup
+	if existing then
+		backup = exportBackup(existing, "layouts", "layout" .. no)
+		runCommand(string.format("Delete Layout %d /NoConfirmation", no), function() return pool[no] == nil end)
+	end
+	runCommand(string.format("Store Layout %d", no), function() return pool[no] ~= nil end)
+	runCommand(string.format('Label Layout %d "%s"', no, args.name), function() return pool[no].name == args.name end)
+	runCommand(string.format("Assign Fixture %s At Layout %d", table.concat(fids, " + "), no), function() return pool[no]:Count() >= #fids end, 6)
+
+	local scale = tonumber(args.scale) or 100
+	local placed, problems = 0, {}
+	for _, e in ipairs(pool[no]:Children()) do
+		local obj = e:Get("Object")
+		local fid = obj and math.tointeger(tonumber(display(obj, "FID") or ""))
+		local el = fid and wanted[fid]
+		if el then
+			local x, y = tonumber(el.x), tonumber(el.y)
+			if x == nil or y == nil then
+				x = (tonumber(tostring(display(obj, "PosX") or ""):match("(-?[%d%.]+)")) or 0) * scale
+				y = (tonumber(tostring(display(obj, "PosY") or ""):match("(-?[%d%.]+)")) or 0) * scale
+			end
+			e:Set("PosX", tostring(math.floor(x + 0.5)))
+			e:Set("PosY", tostring(math.floor(y + 0.5)))
+			if el.width then e:Set("Width", tostring(math.tointeger(el.width) or 50)) end
+			if el.height then e:Set("Height", tostring(math.tointeger(el.height) or 50)) end
+			if math.abs((tonumber(display(e, "PosX")) or 1e9) - math.floor(x + 0.5)) > 0.5 then problems[#problems + 1] = "FID " .. fid .. " was not placed" else placed = placed + 1 end
+		end
+	end
+	local info = layoutInfo(pool[no])
+	info.placed = placed
+	info.problems = problems
+	info.backup = backup
+	return info
 end
 
 -- Probe ops for development; disabled unless started with "dev".

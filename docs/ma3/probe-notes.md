@@ -198,3 +198,42 @@ Selective="Selective"><Step Function="<function attribute>" .../></Phaser>`. Imp
 - On onPC 2.5.1.1 (macOS, no MA hardware) the 3D window rendered the stage (floor grid, walls) but no fixtures or
   beams, with 12 fixtures placed at 5 m and a cue playing; `GetDMXValue` also reads 0. Probably no visualisation
   without output hardware; to be checked on a rig with MA hardware.
+
+## Executors, speed masters, pages
+
+- Executor properties (`DataPool().Pages[p]` children, find by `No`): `Fader` (Master, Temp, X, XA, XB, Rate, Speed,
+  Time), `KeyPress` / `KeyUnpress` (Go+, Go-, Toggle, Flash, On, Off, Top, Pause, Kill, Select, Learn, LearnSpeed, ...),
+  `Width`, `Height`, `Object`. `Set` works directly and reads back.
+- **Wide executors cover the slots to their right**: with 203 at Width 2, `Assign ... At Page 1.204` replaces 203's
+  content. There is no executor object 204, so check which executor covers a slot.
+- `Assign Master 3.<n> At Page p.e` puts speed master n on an executor; grandMA3 sets its button to LearnSpeed (tap).
+  `Master 3.<n> At BPM <bpm>` (or Hz / Seconds) sets the speed, `Label Master 3.<n> "<name>"` names it.
+- `Store Page <n>` creates a page, `Label Page <n> "<name>"` names it.
+- Phaser `SpeedMaster` references the master **by its current name**: after renaming Speed1 to "Dimmer FX",
+  `SpeedMaster="Speed1"` no longer resolves (stored as None). Write the current name.
+
+## MAtricks
+
+- `DataPool().MAtricks[n]`; properties `XBlock`, `XGroup`, `XWings`, `XWidth`, `XShift`, `XShuffle`, `XInv`,
+  `PhaseFromX`/`PhaseToX`, `FadeFromX`/`FadeToX`, `DelayFromX`/`DelayToX` (also Y and Z). `Set` works; "1"/"None" =
+  off. Command-line keywords like `MAtricksWings 2` do not exist in that spelling ("Object not found").
+
+## Sequences: editing and replacing
+
+- Importing XML over an existing sequence merges cue by cue _position_: removing a cue from the XML shifts the rest
+  into the wrong slots. Do not use it for edits.
+- Deleting a sequence empties every executor holding it. grandmcp remembers them (with fader/button/size) and
+  reassigns after recreating.
+- Single cues: build the cue in a scratch sequence, then `Copy Sequence <s> Cue <c> At Sequence <t> Cue <c>
+/Overwrite /NoConfirmation`; the target keeps its identity. `Delete Sequence <s> Cue <c> /NoConfirmation`.
+- The sequence pool has 1000 slots (`Count()`); creating sequence 9990 fails.
+- Delete / copy / rename: `Delete <obj> /NoConfirmation`, `Copy <obj> At <obj> /Overwrite /NoConfirmation` (MA names the
+  copy "<name>#2"), `Label <obj> "<name>"`.
+
+## Appearances and layouts
+
+- `ShowData().Appearances[n]` (`Create`), colour via `BackR`/`BackG`/`BackB`/`BackAlpha`; assign with
+  `object.Appearance = appearance` (a reference, like the 3D camera).
+- `Store Layout <n>` creates an empty layout (storing from a selection adds nothing); `Assign Fixture a + b At Layout
+<n>` adds elements. Elements: `Object` (the fixture), `PosX`/`PosY`/`Width`/`Height` (default 50 x 50), `Action`
+  SelectFixtures.

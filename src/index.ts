@@ -4,6 +4,7 @@ import { serveStdio } from '@modelcontextprotocol/server/stdio';
 
 import { registerBuildBuskingShowPrompt } from './prompts/buildBuskingShow.ts';
 import { registerPatchFromDocumentPrompt } from './prompts/patchFromDocument.ts';
+import { registerEditingTools } from './tools/editing.ts';
 import { registerGroupTools } from './tools/groups.ts';
 import { registerInspectTools } from './tools/inspect.ts';
 import { registerLibraryTools } from './tools/library.ts';
@@ -28,6 +29,7 @@ serveStdio(() => {
 	registerGroupTools(server, ctx);
 	registerPresetTools(server, ctx);
 	registerSequenceTools(server, ctx);
+	registerEditingTools(server, ctx);
 	registerScreenshotTools(server, ctx);
 	registerManualTools(server, ctx);
 	registerPatchFromDocumentPrompt(server);

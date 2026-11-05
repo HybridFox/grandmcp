@@ -15,6 +15,43 @@ interface GroupInfo {
 	backup?: string;
 }
 
+interface MatricksInfo {
+	no: number;
+	name: string;
+	block?: number;
+	group?: number;
+	wings?: number;
+	width?: number;
+	shift?: number;
+	invert?: boolean;
+	phaseFrom?: number;
+	phaseTo?: number;
+	fadeFrom?: number;
+	fadeTo?: number;
+	delayFrom?: number;
+	delayTo?: number;
+}
+
+export function describeMatricks(m: MatricksInfo): string {
+	const parts = (['block', 'group', 'wings', 'width', 'shift'] as const).filter((k) => m[k] !== undefined).map((k) => `${k} ${m[k]}`);
+
+	if (m.invert) {
+		parts.push('inverted');
+	}
+
+	for (const [label, from, to] of [
+		['phase', m.phaseFrom, m.phaseTo],
+		['fade', m.fadeFrom, m.fadeTo],
+		['delay', m.delayFrom, m.delayTo],
+	] as const) {
+		if (from !== undefined || to !== undefined) {
+			parts.push(`${label} ${from ?? 0}..${to ?? 0}`);
+		}
+	}
+
+	return `MAtricks ${m.no} "${m.name}": ${parts.join(', ') || 'no pattern'}`;
+}
+
 /** "301-305, 1101" */
 export function fidRanges(fids: number[]): string {
 	const parts: string[] = [];
@@ -145,6 +182,149 @@ export function registerGroupTools(server: McpServer, ctx: AppContext): void {
 				const result = await ctx.serialize(() => ctx.bridge.request<{ no: number; backup: string }>('group.delete', { no }));
 
 				return ok(result, `Deleted group ${result.no}. Exported to ${result.backup} first.`);
+			} catch (error) {
+				return fromError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		'grandmcp_matricks_list',
+		{
+			title: 'List MAtricks',
+			description: 'List the MAtricks pool: stored selection patterns (block, group, wings, width, shift, invert, phase/fade/delay spreads).',
+			inputSchema: z.object({}),
+			annotations: { readOnlyHint: true, idempotentHint: true },
+		},
+		async () => {
+			try {
+				const list = await ctx.bridge.request<MatricksInfo[]>('matricks.list');
+				const text = list.length === 0 ? 'No MAtricks.' : list.map(describeMatricks).join('\n');
+
+				return { content: [{ type: 'text', text }], structuredContent: { matricks: list } };
+			} catch (error) {
+				return fromError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		'grandmcp_matricks_store',
+		{
+			title: 'Store MAtricks',
+			description: [
+				'Create or replace a MAtricks pool object: a selection pattern the user calls live on top of a group, so one effect gives many variants.',
+				'block = neighbours share a step, group = every n-th fixture (2 = odd/even), wings = mirror (2 = symmetric), width = how many fixtures are active at once, shift = move the pattern, invert = reverse; phaseFrom/phaseTo spread effect phase, fadeFrom/fadeTo and delayFrom/delayTo spread timing.',
+			].join(' '),
+			inputSchema: z.object({
+				no: z.number().int().min(1).max(9999),
+				name: z.string().min(1).max(100),
+				overwrite: z.boolean().default(false),
+				block: z.number().int().min(1).optional(),
+				group: z.number().int().min(1).optional(),
+				wings: z.number().int().min(1).optional(),
+				width: z.number().int().min(1).optional(),
+				shift: z.number().int().optional(),
+				invert: z.boolean().optional(),
+				phaseFrom: z.number().optional(),
+				phaseTo: z.number().optional(),
+				fadeFrom: z.number().min(0).optional(),
+				fadeTo: z.number().min(0).optional(),
+				delayFrom: z.number().min(0).optional(),
+				delayTo: z.number().min(0).optional(),
+			}),
+			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+		},
+		async (input) => {
+			if (!ctx.allowWrite) {
+				return WRITES_DISABLED;
+			}
+
+			try {
+				const result = await ctx.serialize(() => ctx.bridge.request<MatricksInfo>('matricks.store', input));
+
+				return ok(result, `Stored ${describeMatricks(result)}`);
+			} catch (error) {
+				return fromError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		'grandmcp_layout_list',
+		{
+			title: 'List layouts',
+			description: 'List layout views (2D fixture maps) with their number of elements.',
+			inputSchema: z.object({}),
+			annotations: { readOnlyHint: true, idempotentHint: true },
+		},
+		async () => {
+			try {
+				const list = await ctx.bridge.request<{ no: number; name: string; elements: number }[]>('layout.list');
+
+				return {
+					content: [{ type: 'text', text: list.map((l) => `Layout ${l.no} "${l.name}": ${l.elements} elements`).join('\n') || 'No layouts.' }],
+					structuredContent: { layouts: list },
+				};
+			} catch (error) {
+				return fromError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		'grandmcp_layout_store',
+		{
+			title: 'Store layout',
+			description: [
+				'Create or replace a layout view: a 2D map of fixtures that selects them when tapped (handy for busking and for selection order).',
+				'Give x/y per fixture (layout units, the default element is 50 x 50), or leave them out to place the fixture from its 3D position seen from above (scale layout units per metre, default 100).',
+				'Replacing a layout exports the old one first.',
+			].join(' '),
+			inputSchema: z.object({
+				no: z.number().int().min(1).max(999),
+				name: z.string().min(1).max(100),
+				overwrite: z.boolean().default(false),
+				scale: z.number().positive().optional(),
+				elements: z
+					.array(
+						z.object({
+							fid: z.number().int().min(1),
+							x: z.number().optional(),
+							y: z.number().optional(),
+							width: z.number().int().min(1).optional(),
+							height: z.number().int().min(1).optional(),
+						}),
+					)
+					.min(1)
+					.max(2000),
+			}),
+			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+		},
+		async (input) => {
+			if (!ctx.allowWrite) {
+				return WRITES_DISABLED;
+			}
+
+			try {
+				const result = await ctx.serialize(() =>
+					ctx.bridge.request<{ no: number; name: string; placed: number; problems: string[]; backup?: string; elements: unknown[] }>(
+						'layout.store',
+						input,
+						60_000,
+					),
+				);
+				const lines = [`Layout ${result.no} "${result.name}" with ${result.placed} placed fixtures.`];
+
+				if (result.problems.length > 0) {
+					lines.push(`Problems: ${result.problems.join('; ')}.`);
+				}
+
+				if (result.backup) {
+					lines.push(`The previous layout was exported to ${result.backup}.`);
+				}
+
+				return ok(result, lines.join('\n'));
 			} catch (error) {
 				return fromError(error);
 			}

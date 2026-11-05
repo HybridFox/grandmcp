@@ -6,6 +6,24 @@ import type { AppContext } from '../context.ts';
 import { presetValueSchema } from './presets.ts';
 import { fromError, ok, WRITES_DISABLED } from './result.ts';
 
+export interface ExecutorInfo {
+	executor: number;
+	class?: string;
+	name?: string;
+	no?: number;
+	fader?: string;
+	button?: string;
+	release?: string;
+	width?: number;
+	height?: number;
+}
+
+export function describeExecutor(page: number, e: ExecutorInfo): string {
+	const size = (e.width ?? 1) > 1 || (e.height ?? 1) > 1 ? `, size ${e.width ?? 1}x${e.height ?? 1}` : '';
+
+	return `${page}.${e.executor}: ${e.class ?? '?'} ${e.no ?? ''} "${e.name ?? ''}" (fader ${e.fader ?? '-'}, button ${e.button ?? '-'}${size})`;
+}
+
 interface CueInfo {
 	no: number;
 	name: string;
@@ -127,22 +145,117 @@ export function registerSequenceTools(server: McpServer, ctx: AppContext): void 
 		'grandmcp_executor_list',
 		{
 			title: 'List executors',
-			description: 'List the executors (faders and buttons) on a page that have something assigned.',
+			description: 'List the executors (faders and buttons) on a page that have something assigned, with fader and button functions and size.',
 			inputSchema: z.object({ page: z.number().int().min(1).default(1) }),
 			annotations: { readOnlyHint: true, idempotentHint: true },
 		},
 		async ({ page }) => {
 			try {
-				const result = await ctx.bridge.request<{ page: number; executors: { executor: number; class: string; name: string; no?: number }[] }>(
-					'executor.list',
-					{ page },
-				);
+				const result = await ctx.bridge.request<{ page: number; name: string; executors: ExecutorInfo[] }>('executor.list', { page });
 				const text =
 					result.executors.length === 0
-						? `Page ${page} has no assigned executors.`
-						: result.executors.map((e) => `${page}.${e.executor}: ${e.class} ${e.no ?? ''} "${e.name}"`).join('\n');
+						? `Page ${page} "${result.name}" has no assigned executors.`
+						: [`Page ${page} "${result.name}":`, ...result.executors.map((e) => `  ${describeExecutor(page, e)}`)].join('\n');
 
-				return { content: [{ type: 'text', text }], structuredContent: result };
+				return { content: [{ type: 'text', text }], structuredContent: { ...result } };
+			} catch (error) {
+				return fromError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		'grandmcp_executor_configure',
+		{
+			title: 'Configure executor',
+			description: [
+				"Set what an executor's fader and button do, and its size.",
+				'Fader functions: Master, Temp, X, XA, XB, Rate, Speed, Time. Button functions include Go+, Go-, Toggle, Flash, On, Off, Top, Pause, Kill, Select, Learn (tap), LearnSpeed, HalfSpeed, DoubleSpeed.',
+				'For busking: effect layers usually Toggle or Flash with a Master fader; utilities like strobe or blinder Flash.',
+			].join(' '),
+			inputSchema: z.object({
+				page: z.number().int().min(1).default(1),
+				executor: z.number().int().min(1),
+				fader: z.string().min(1).optional(),
+				button: z.string().min(1).optional().describe('Function of the button press.'),
+				release: z.string().min(1).optional().describe('Function of the button release (rarely needed).'),
+				width: z.number().int().min(1).max(5).optional(),
+				height: z.number().int().min(1).max(5).optional(),
+			}),
+			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+		},
+		async (input) => {
+			if (!ctx.allowWrite) {
+				return WRITES_DISABLED;
+			}
+
+			try {
+				const result = await ctx.serialize(() => ctx.bridge.request<ExecutorInfo>('executor.configure', input));
+
+				return ok(result, describeExecutor(input.page, result));
+			} catch (error) {
+				return fromError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		'grandmcp_speedmaster_set',
+		{
+			title: 'Set speed master',
+			description: [
+				'Set one of the 16 speed masters: its BPM, its label, and optionally put it on an executor, where grandMA3 makes the button a tap (LearnSpeed) and the fader the speed.',
+				'Effects linked to the speed master (speedMaster in grandmcp_preset_store) follow it.',
+			].join(' '),
+			inputSchema: z.object({
+				master: z.number().int().min(1).max(16),
+				bpm: z.number().positive().max(3000).optional(),
+				label: z.string().min(1).max(100).optional(),
+				page: z.number().int().min(1).default(1),
+				executor: z.number().int().min(1).optional(),
+				overwrite: z.boolean().default(false),
+			}),
+			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+		},
+		async (input) => {
+			if (!ctx.allowWrite) {
+				return WRITES_DISABLED;
+			}
+
+			try {
+				const result = await ctx.serialize(() =>
+					ctx.bridge.request<{ master: number; name: string; executor?: ExecutorInfo }>('speedmaster.set', input),
+				);
+				const lines = [`Speed master ${result.master} "${result.name}"${input.bpm ? ` at ${input.bpm} BPM` : ''}.`];
+
+				if (result.executor) {
+					lines.push(describeExecutor(input.page, result.executor));
+				}
+
+				return ok(result, lines.join('\n'));
+			} catch (error) {
+				return fromError(error);
+			}
+		},
+	);
+
+	server.registerTool(
+		'grandmcp_page_store',
+		{
+			title: 'Create or name page',
+			description: 'Create an executor page if it does not exist and give it a name, e.g. one page per music style.',
+			inputSchema: z.object({ no: z.number().int().min(1).max(9999), name: z.string().min(1).max(100) }),
+			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+		},
+		async (input) => {
+			if (!ctx.allowWrite) {
+				return WRITES_DISABLED;
+			}
+
+			try {
+				const result = await ctx.serialize(() => ctx.bridge.request<{ no: number; name: string }>('page.store', input));
+
+				return ok(result, `Page ${result.no} is "${result.name}".`);
 			} catch (error) {
 				return fromError(error);
 			}

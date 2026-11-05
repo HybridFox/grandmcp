@@ -61,6 +61,15 @@ export const effectSchema = z.object({
 		.max(16)
 		.optional()
 		.describe('Link the effect to speed master 1-16 so its speed follows that master (BPM tap) when busking.'),
+	pattern: z
+		.object({
+			blocks: z.number().int().min(1).optional().describe('Neighbouring fixtures share a step in blocks of this size.'),
+			groups: z.number().int().min(1).optional().describe('Every n-th fixture shares a step (2 = odd/even).'),
+			wings: z.number().int().min(1).optional().describe('Mirror the pattern across this many wings (2 = symmetric from the outside in).'),
+			invert: z.boolean().optional().describe('Reverse the order (with wings 2: from the centre out).'),
+		})
+		.optional()
+		.describe("How the phase spread is laid over the fixtures, like MAtricks on one axis, in the order of the entry's fids."),
 	phase: z
 		.object({ from: z.number(), to: z.number() })
 		.optional()
