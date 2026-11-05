@@ -19,3 +19,11 @@ export function fromError(error: unknown): CallToolResult {
 
 	return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }] };
 }
+
+export function failure(text: string): CallToolResult {
+	return { isError: true, content: [{ type: 'text', text }] };
+}
+
+export const WRITES_DISABLED = failure(
+	'Console writes are disabled. Restart the grandmcp MCP server with GRANDMCP_ALLOW_WRITE=1 to allow changes to the show.',
+);

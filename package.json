@@ -12,7 +12,7 @@
 		"grandmcp": "src/index.ts"
 	},
 	"scripts": {
-		"start": "tsx src/index.ts",
+		"start": "node src/index.ts",
 		"probe": "tsx scripts/probe.ts",
 		"install-plugin": "tsx scripts/install-plugin.ts",
 		"typecheck": "tsc --noEmit",
@@ -20,7 +20,9 @@
 		"lint": "eslint .",
 		"lint:fix": "eslint . --fix",
 		"format": "prettier --write .",
-		"format:check": "prettier --check ."
+		"format:check": "prettier --check .",
+		"reload": "tsx scripts/install-plugin.ts && tsx scripts/probe.ts raw reload",
+		"smoke": "tsx scripts/smoke.ts"
 	},
 	"dependencies": {
 		"@modelcontextprotocol/server": "2.4.0",
@@ -29,6 +31,7 @@
 	},
 	"devDependencies": {
 		"@eslint/js": "10.0.1",
+		"@modelcontextprotocol/client": "2.4.0",
 		"@types/node": "26.6.6",
 		"@typescript-eslint/eslint-plugin": "8.71.2",
 		"@typescript-eslint/parser": "8.71.2",

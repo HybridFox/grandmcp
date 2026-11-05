@@ -72,6 +72,7 @@ export class BridgeClient {
 	}
 
 	close(): void {
+		this.failAll(new BridgeError('bridge client closed', 'connection-lost', 'unknown'));
 		this.socket?.destroy();
 		this.socket = undefined;
 	}
