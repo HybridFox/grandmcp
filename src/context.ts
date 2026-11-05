@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { BridgeClient } from './bridge/client.ts';
 import type { CatalogPage, LibraryEntry } from './bridge/types.ts';
+import type { ChangePlan } from './patch/changes.ts';
 import type { PatchPlan } from './patch/planner.ts';
 import { config } from './config.ts';
 
@@ -9,12 +10,14 @@ const PLAN_TTL_MS = 30 * 60 * 1000;
 const LIBRARY_TTL_MS = 30 * 60 * 1000;
 const CATALOG_PAGE = 2000;
 
-export interface StoredPlan {
-	plan: PatchPlan;
+/** A reviewed plan waiting for grandmcp_patch_apply: new fixtures, or changes to existing ones. */
+export type PlanEntry = { kind: 'add'; plan: PatchPlan } | { kind: 'change'; plan: ChangePlan };
+
+export type StoredPlan = PlanEntry & {
 	/** Fingerprint of the live patch the plan was made against. */
 	fingerprint: string;
 	createdAt: number;
-}
+};
 
 /** Long-lived state shared by every McpServer instance the stdio factory creates. */
 export interface AppContext {
@@ -23,7 +26,7 @@ export interface AppContext {
 	/** Runs console writes one at a time. */
 	serialize<T>(work: () => Promise<T>): Promise<T>;
 	plans: {
-		save(plan: StoredPlan['plan'], fingerprint: string): string;
+		save(entry: PlanEntry, fingerprint: string): string;
 		take(id: string): StoredPlan | undefined;
 	};
 	/** MA's fixture catalog, cached: the first read of a session takes a while (25k+ entries). */
@@ -49,7 +52,7 @@ export function createContext(): AppContext {
 			return run;
 		},
 		plans: {
-			save(plan, fingerprint) {
+			save(entry, fingerprint) {
 				const now = Date.now();
 				for (const [id, stored] of plans) {
 					if (now - stored.createdAt > PLAN_TTL_MS) {
@@ -58,7 +61,7 @@ export function createContext(): AppContext {
 				}
 
 				const id = `plan-${randomUUID().slice(0, 8)}`;
-				plans.set(id, { plan, fingerprint, createdAt: now });
+				plans.set(id, { ...entry, fingerprint, createdAt: now });
 
 				return id;
 			},

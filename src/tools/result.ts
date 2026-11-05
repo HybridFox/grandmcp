@@ -11,8 +11,13 @@ export function ok(data: unknown, summary?: string): CallToolResult {
 /** Turns a thrown error into a tool error the model can act on, including whether the console may have changed. */
 export function fromError(error: unknown): CallToolResult {
 	if (error instanceof BridgeError) {
-		const hint =
-			error.outcome === 'unknown' ? ' The request was sent but not answered, so the console may have acted: read its state before retrying.' : '';
+		let hint = '';
+
+		if (error.outcome === 'unknown') {
+			hint = ' The request was sent but not answered, so the console may have acted: read its state before retrying.';
+		} else if (error.code === 'modal-open') {
+			hint = ' Pop-ups on the console are for the user to answer: tell them what it asks and wait for them.';
+		}
 
 		return { isError: true, content: [{ type: 'text', text: `[${error.code}] ${error.message}${hint}` }] };
 	}

@@ -12,6 +12,11 @@ export interface LiveFixture {
 	patch?: string;
 	footprint?: number;
 	conflicted: boolean;
+	/** FID of the grouping fixture this fixture sits under. */
+	parent?: string;
+	/** Fixtures under this one (it is a grouping fixture). */
+	children: number;
+	/** Cells of a multi-instance fixture (pixel bars and the like); they have no FID of their own. */
 	subfixtures: number;
 }
 
@@ -62,4 +67,21 @@ export interface PatchAddResult {
 	/** Set when the read-back after the commit failed; the change is in, but unchecked. */
 	verifyError?: string;
 	results: { fid: number; ok: boolean; actual?: LiveFixture }[];
+}
+
+/** An open MA pop-up, as the plugin reads it. */
+export interface Dialog {
+	title?: string;
+	message?: string;
+	buttons: string[];
+}
+
+export interface MoveResult {
+	pending: boolean;
+	dialog?: Dialog;
+	moved?: boolean;
+	cancelled?: boolean;
+	note?: string;
+	backup: string;
+	results?: { fid: number; ok: boolean; parent?: string }[];
 }

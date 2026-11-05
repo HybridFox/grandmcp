@@ -17,6 +17,7 @@ const types: FixtureType[] = [
 	{ index: 2, name: 'Robin LEDBeam 150 RGBA', manufacturer: 'Robe', modes: [{ name: 'Standard 16-Bit', footprint: 22, breaks: 1 }] },
 	{ index: 3, name: 'Jolt Panel FX', manufacturer: 'ADJ', modes: [{ name: '81 Channel', footprint: 81, breaks: 1 }] },
 	{ index: 4, name: 'Two Break', modes: [{ name: 'Split', footprint: 4, breaks: 2 }] },
+	{ index: 5, name: 'Grouping', modes: [{ name: 'Default', footprint: 0, breaks: 1 }] },
 ];
 
 const emptyPatch: LivePatch = { stages: ['Stage 1'], fixtures: [] };
@@ -34,6 +35,7 @@ const livePatch: LivePatch = {
 			patch: '1.001',
 			footprint: 1,
 			conflicted: false,
+			children: 0,
 			subfixtures: 0,
 		},
 		{
@@ -46,6 +48,7 @@ const livePatch: LivePatch = {
 			patch: '1.002',
 			footprint: 1,
 			conflicted: false,
+			children: 0,
 			subfixtures: 0,
 		},
 	],
@@ -171,5 +174,25 @@ describe('planPatch', () => {
 		const result = plan([{ fid: 7, type: 'Dimmer', mode: 'Mode 0' }]);
 
 		expect(result.fixtures[0]?.name).toBe('Dimmer 7');
+	});
+
+	it('creates a grouping fixture and puts new fixtures under it', () => {
+		const result = plan([
+			{ fid: 2000, name: 'Truss Left', type: 'Grouping' },
+			{ fid: 2001, count: 2, name: 'TL Beam', type: 'Robin LEDBeam 150 RGBA', patch: '5.1', parent: 2000 },
+		]);
+
+		expect(result.errors).toEqual([]);
+		expect(result.fixtures.map((f) => [f.fid, f.patch, f.parent])).toEqual([
+			[2000, null, undefined],
+			[2001, '5.001', 2000],
+			[2002, '5.023', 2000],
+		]);
+	});
+
+	it('refuses to patch a grouping fixture or use a normal fixture as parent', () => {
+		expect(plan([{ fid: 2000, type: 'Grouping', patch: '1.5' }]).errors[0]).toMatch(/no DMX channels/);
+		expect(plan([{ fid: 1, type: 'Dimmer', mode: 'Mode 0', parent: 101 }], livePatch).errors[0]).toMatch(/parent FID 101 is not a grouping fixture/);
+		expect(plan([{ fid: 1, type: 'Dimmer', mode: 'Mode 0', parent: 7 }]).errors[0]).toMatch(/parent FID 7 is neither/);
 	});
 });

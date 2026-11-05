@@ -3,9 +3,11 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 
 import { registerPatchFromDocumentPrompt } from './prompts/patchFromDocument.ts';
+import { registerGroupTools } from './tools/groups.ts';
 import { registerInspectTools } from './tools/inspect.ts';
 import { registerLibraryTools } from './tools/library.ts';
 import { registerManualTools } from './tools/manual.ts';
+import { registerMoveTools } from './tools/move.ts';
 import { registerPatchTools } from './tools/patch.ts';
 import { registerStatusTools } from './tools/status.ts';
 import { createContext } from './context.ts';
@@ -18,6 +20,8 @@ serveStdio(() => {
 	registerInspectTools(server, ctx);
 	registerLibraryTools(server, ctx);
 	registerPatchTools(server, ctx);
+	registerMoveTools(server, ctx);
+	registerGroupTools(server, ctx);
 	registerManualTools(server, ctx);
 	registerPatchFromDocumentPrompt(server);
 

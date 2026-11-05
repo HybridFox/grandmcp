@@ -15,6 +15,8 @@ export interface PlannedFixture {
 	patch: string | null;
 	/** Index of the input row this fixture came from. */
 	row: number;
+	/** FID of the grouping fixture it goes under. */
+	parent?: number;
 }
 
 export interface PatchPlan {
@@ -48,7 +50,7 @@ export function parseAddress(value: string): { universe: number; address: number
 }
 
 /** Which fixture owns each DMX channel, per universe. Index 0 is unused so addresses map 1:1. */
-class Occupancy {
+export class Occupancy {
 	private readonly universes = new Map<number, (string | undefined)[]>();
 
 	private channels(universe: number): (string | undefined)[] {
@@ -94,13 +96,13 @@ class Occupancy {
 	}
 }
 
-function findType(types: FixtureType[], name: string): FixtureType[] {
+export function findType(types: FixtureType[], name: string): FixtureType[] {
 	const wanted = name.trim().toLowerCase();
 
 	return types.filter((t) => t.name.toLowerCase() === wanted);
 }
 
-function pickMode(type: FixtureType, requested: string | undefined): DmxMode | string {
+export function pickMode(type: FixtureType, requested: string | undefined): DmxMode | string {
 	const names = type.modes.map((m) => `"${m.name}" (${m.footprint} ch)`).join(', ');
 
 	if (requested === undefined) {
@@ -185,10 +187,43 @@ export function planPatch(input: PatchPlanInput, live: LivePatch, types: Fixture
 			return;
 		}
 
-		if (mode.footprint < 1 || mode.footprint > UNIVERSE_SIZE) {
+		const grouping = mode.footprint === 0; // grouping fixtures have no DMX channels and are never patched
+
+		if (grouping && entry.patch !== 'auto' && entry.patch !== 'none') {
+			errors.push(`${label}: "${type.name}" has no DMX channels (a grouping fixture), so it cannot be patched; use patch "none"`);
+
+			return;
+		}
+
+		if (mode.footprint < 0 || mode.footprint > UNIVERSE_SIZE) {
 			errors.push(`${label}: mode "${mode.name}" reports a footprint of ${mode.footprint} channels`);
 
 			return;
+		}
+
+		if (entry.parent !== undefined) {
+			const parentFid = entry.parent;
+			const inShow = live.fixtures.find((f) => f.idType === 'Fixture' && Number(f.fid) === parentFid);
+			const inPlan = fixtures.find((f) => f.fid === parentFid);
+			const parentFootprint = inShow ? inShow.footprint : inPlan?.footprint;
+
+			if (!inShow && !inPlan) {
+				errors.push(`${label}: parent FID ${parentFid} is neither in the show nor created by an earlier row`);
+
+				return;
+			}
+
+			if (parentFootprint !== 0) {
+				errors.push(`${label}: parent FID ${parentFid} is not a grouping fixture`);
+
+				return;
+			}
+
+			if (inShow?.parent !== undefined) {
+				errors.push(`${label}: parent FID ${parentFid} is itself inside a grouping fixture; use a top-level one`);
+
+				return;
+			}
 		}
 
 		const explicit = entry.patch === 'auto' || entry.patch === 'none' ? undefined : parseAddress(entry.patch);
@@ -236,7 +271,7 @@ export function planPatch(input: PatchPlanInput, live: LivePatch, types: Fixture
 
 				occupancy.claim(explicit.universe, address, mode.footprint, owner);
 				patch = formatAddress(explicit.universe, address);
-			} else if (entry.patch === 'auto') {
+			} else if (entry.patch === 'auto' && !grouping) {
 				let address = occupancy.firstFree(autoUniverse, mode.footprint);
 
 				while (address === undefined && entry.universe === undefined && autoUniverse < MAX_UNIVERSE) {
@@ -253,7 +288,16 @@ export function planPatch(input: PatchPlanInput, live: LivePatch, types: Fixture
 				patch = formatAddress(autoUniverse, address);
 			}
 
-			fixtures.push({ fid, name, type: type.name, mode: mode.name, footprint: mode.footprint, patch, row });
+			fixtures.push({
+				fid,
+				name,
+				type: type.name,
+				mode: mode.name,
+				footprint: mode.footprint,
+				patch,
+				row,
+				...(entry.parent ? { parent: entry.parent } : {}),
+			});
 		}
 	});
 

@@ -75,3 +75,57 @@ Verified live through the bridge's dev `lua` op on 2026-11-05. `lua_functions_2.
 - `GrandMA2Library`: `shared/lib_fixture_types/grandma2` (11,536 `.pxml` files)
 - `UserFixtures`: `gma3_library/fixturetypes` (user GDTF / XML)
 - `DirList(path, "generic@d*")` returns `{name, size, time}` rows.
+
+## Changing existing fixtures (verified with a group and a cue referencing the fixtures)
+
+- In the edit copy, `fixture:Set("FID", "150")`, `Set("Name", ...)` and `Set("Patch", "4.001")` / `Set("Patch", "")`
+  work. `Set("FID", "")` does not clear an FID. Setting an FID another fixture holds bumps that fixture; swaps work as
+  long as the final state is unique.
+- `fixtureHolder:Delete(index)` removes a fixture (index = position in `Stage.Fixtures:Children()`).
+- **Never `Set("Mode", ...)`**: every value format tried (name, index, address) blanks the mode _and_ the fixture type.
+  Change type or mode with `Assign FixtureType "<type>"."DMXModes"."<mode>" At <index>` from the stage's `Fixtures`
+  destination (via `CmdIndirect`, no dialog). It keeps the address; set it again anyway.
+- Inside the edit copy `ChangeDestination "ShowData"."Patch"` resolves relative to the current destination and fails
+  from `Stage 1.Fixtures`; climb with `ChangeDestination ..` instead (`ChangeDestination Root` would commit).
+- Programming refers to fixtures by object: groups and cues follow an FID change and an address change. A deleted fixture
+  silently drops out of groups. After a type or mode change, cue values are kept per attribute (Dimmer 50 survived
+  Robin Mode 1 -> Mode 2 -> Generic Dimmer).
+- `GetReferences()` / `GetDependencies()` return nothing for fixtures. Where a fixture is used is only visible in the
+  exported XML of groups, sequences and presets: `IDType="0" ID="<fid>"` (`IDType` 0 = Fixture).
+- MA keeps fixture names unique: adding a second "Beam 1" renames the older one to "Beam 1#2".
+
+## Groups
+
+- `DataPool().Groups[n]` is pool slot n; `Groups:Create(n)` makes it. `group:Import(dir, file)` of a group XML
+  (`<Group Name=..><SelectionData Size=..><Item IDType="0" ID="301" X="0" Y="0" Z="0"/>...`) **replaces** its content.
+- Reading a group without touching the programmer: export it and scan the `Item` elements. (Selecting it with
+  `Group n` + `SelectionFirst` works too, but clears the user's selection.)
+- MA strips `"` and `&` from object names.
+- onPC without MA hardware outputs no DMX: `GetDMXValue` reads 0 even while a cue plays, so programming checks have to
+  go through exports.
+
+## Grouping fixtures
+
+- MA3 library `generic@grouping.xml` = type "Grouping", one mode "Default" with 0 channels (`TOTALFOOTPRINT` 0).
+- `AddFixtures{..., parent = <grouping fixture handle>}` (inside the stage's `Fixtures` in the edit copy) creates the
+  fixture as a child of the grouping fixture: `parentFixture:Children()` holds it, class `Fixture`.
+- Children of class `SubFixture` are something else: the cells of multi-instance fixtures (a pixel strip has 80,
+  named "[Instance1]"...), without FID or patch. Walk only `Fixture` children to find nested fixtures.
+- Deleting a grouping fixture deletes the fixtures under it.
+- Moving existing fixtures: in the edit copy at the source holder (`<stage>.Fixtures`, or `ChangeDestination <index>`
+  into a grouping fixture), `Cut 1 + 2` only marks them; nothing moves yet. Navigate to the target holder and
+  `Paste <count + 1>`: a MessageBox "Move Fixtures" asks "keep their absolute position and rotation in 3D space, or
+  their offset relative to their parent?" with buttons Absolute / Relative / Cancel. The paste completes only once it
+  is answered (`LastCommand` stays at the previous command meanwhile); it does not time out (still open after 60 s).
+- After the move (Absolute), FIDs, names and addresses are unchanged, cue and group references survive, but groups
+  list the moved fixtures last: group 10 went from 301-305 to 303, 304, 305, 301, 302.
+- Inside a grouping fixture the command-line destination shows the fixture's name ("Truss Test").
+- `Oops` works inside the edit copy before the commit: it undid a completed paste, after which leaving the edit copy
+  committed nothing.
+
+## Pop-ups (MessageBox)
+
+- `GetTopModal()` returns the MessageBox. Its title is the `TitleButton`'s `Text`, the question is a `UIObject` named
+  "Text", and the answers are `Button`s under the `Commands` grid (`Text`, `AbsRect`).
+- `Mouse(display, "move"/"press"/"release", ...)` could click them, but grandmcp deliberately never answers pop-ups:
+  they are reported to the user, who answers on the console.

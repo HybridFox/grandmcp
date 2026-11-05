@@ -14,6 +14,12 @@ export const fixtureEntrySchema = z.object({
 		.describe(
 			'Start address as "universe.address" (e.g. "1.23" or "2.001"), "auto" for the first free block, or "none" to leave unpatched. With count > 1 the fixtures follow each other.',
 		),
+	parent: z
+		.number()
+		.int()
+		.min(1)
+		.optional()
+		.describe('FID of a grouping fixture (fixture type "Grouping") to put these fixtures under: one in the show or one created by an earlier row.'),
 	universe: z
 		.number()
 		.int()
@@ -30,3 +36,32 @@ export const patchPlanInputSchema = z.object({
 
 export type FixtureEntry = z.output<typeof fixtureEntrySchema>;
 export type PatchPlanInput = z.output<typeof patchPlanInputSchema>;
+
+/** One change to an existing fixture, found by its current FID. */
+export const fixtureChangeSchema = z
+	.object({
+		fid: z.number().int().min(1).describe('Current fixture ID of the fixture to change.'),
+		remove: z.boolean().optional().describe('Delete the fixture. Cannot be combined with other changes.'),
+		newFid: z.number().int().min(1).optional().describe('New fixture ID. Groups and cues follow the fixture.'),
+		name: z.string().min(1).optional().describe('New fixture name.'),
+		patch: z
+			.string()
+			.regex(/^(none|\d{1,4}\.\d{1,3})$/, 'use "none" or "universe.address" like "1.23"')
+			.optional()
+			.describe('New start address ("universe.address") or "none" to unpatch.'),
+		type: z.string().min(1).optional().describe('Change to this fixture type (must be in the show). Requires mode unless the type has a single mode.'),
+		mode: z.string().min(1).optional().describe('Change to this DMX mode (of the new type, or of the current type).'),
+	})
+	.refine((c) => !c.remove || (c.newFid === undefined && c.name === undefined && c.patch === undefined && c.type === undefined && c.mode === undefined), {
+		message: 'remove cannot be combined with other changes',
+	})
+	.refine((c) => c.remove || [c.newFid, c.name, c.patch, c.type, c.mode].some((v) => v !== undefined), {
+		message: 'give at least one change (remove, newFid, name, patch, type or mode)',
+	});
+
+export const patchChangesInputSchema = z.object({
+	changes: z.array(fixtureChangeSchema).min(1).max(1000),
+});
+
+export type FixtureChange = z.output<typeof fixtureChangeSchema>;
+export type PatchChangesInput = z.output<typeof patchChangesInputSchema>;

@@ -20,6 +20,10 @@ const GUIDE = `You are patching a grandMA3 show from a document (fixture report,
    unless the user wants them auto-patched.
 6. Call grandmcp_patch_plan, show the user the full plan table and any warnings, and only call grandmcp_patch_apply
    after they agree. Afterwards, report the backup path and run grandmcp_patch_list to show the result.
+   If the user organises patches with grouping fixtures (one per truss or position), create those first with a row
+   of type "Grouping" (import generic@grouping.xml from the catalog if needed) and put fixtures under them with parent.
+7. Offer to create groups with grandmcp_group_store, for example one per fixture type or per position in the
+   document, in a sensible selection order (left to right). Corrections later go through grandmcp_patch_plan_changes.
 
 Never invent DMX modes or addresses that are not in the document; ask instead.`;
 

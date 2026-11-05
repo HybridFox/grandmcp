@@ -52,7 +52,7 @@ change is complete. MA cannot undo a patch commit, so every apply first exports 
     Plugin "grandmcp"
     ```
 
-    The command line history should show `grandmcp 0.3.3 listening on 127.0.0.1:9810`. Save the show to keep the
+    The command line history should show `grandmcp 0.7.0 listening on 127.0.0.1:9810`. Save the show to keep the
     plugin in it. The plugin has to be started again after loading a show.
 
 3. Add the server to your MCP client. For Claude Code:
@@ -75,17 +75,23 @@ change is complete. MA cannot undo a patch commit, so every apply first exports 
 
 ## Tools
 
-| Tool                                             | What it does                                                                                                              | Writes |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ------ |
-| `grandmcp_status`                                | Connection check: software version, host type, show status, open pop-ups                                                  |        |
-| `grandmcp_get`, `grandmcp_children`              | Read any object in the grandMA3 object tree                                                                               |        |
-| `grandmcp_patch_list`                            | Every fixture in the live patch with FID, type, mode, footprint and address                                               |        |
-| `grandmcp_fixture_types`                         | Fixture types in the show, with DMX modes and channel counts                                                              |        |
-| `grandmcp_fixture_library_search`                | Search the full fixture catalog (MA3, MA2, your files, GDTF Share, Fixture Share) with DMX modes; filter by channel count |        |
-| `grandmcp_fixture_type_import`                   | Import a catalog entry into the show (Share entries are downloaded first)                                                 | yes    |
-| `grandmcp_patch_plan`                            | Work out FIDs and addresses for a fixture list and check every conflict. Changes nothing                                  |        |
-| `grandmcp_patch_apply`                           | Back up the patch, add the planned fixtures, commit, read back and verify                                                 | yes    |
-| `grandmcp_manual_search`, `grandmcp_manual_read` | Search and read the grandMA3 manual that ships with onPC                                                                  |        |
+| Tool                                             | What it does                                                                                                                                                           | Writes |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `grandmcp_status`                                | Connection check: software version, host type, show status, open pop-ups                                                                                               |        |
+| `grandmcp_get`, `grandmcp_children`              | Read any object in the grandMA3 object tree                                                                                                                            |        |
+| `grandmcp_patch_list`                            | Every fixture in the live patch with FID, type, mode, footprint and address                                                                                            |        |
+| `grandmcp_fixture_types`                         | Fixture types in the show, with DMX modes and channel counts                                                                                                           |        |
+| `grandmcp_fixture_library_search`                | Search the full fixture catalog (MA3, MA2, your files, GDTF Share, Fixture Share) with DMX modes; filter by channel count                                              |        |
+| `grandmcp_fixture_type_import`                   | Import a catalog entry into the show (Share entries are downloaded first)                                                                                              | yes    |
+| `grandmcp_patch_plan`                            | Work out FIDs and addresses for a fixture list and check every conflict. Changes nothing                                                                               |        |
+| `grandmcp_patch_plan_changes`                    | Plan changes to existing fixtures: remove, new FID, rename, re-address or unpatch, new type or mode. Lists where removed or retyped fixtures are used. Changes nothing |        |
+| `grandmcp_patch_apply`                           | Back up the patch, apply an add or change plan, commit, read back and verify                                                                                           | yes    |
+| `grandmcp_patch_move`                            | Move fixtures under a grouping fixture or back to the top level; reports grandMA3's question for you to answer                                                         | yes    |
+| `grandmcp_patch_move_finish`                     | Complete a move after you answered on the console                                                                                                                      | yes    |
+| `grandmcp_group_list`                            | Groups in the current data pool with their fixture IDs                                                                                                                 |        |
+| `grandmcp_group_store`                           | Create or replace a group with exactly these fixtures, in order                                                                                                        | yes    |
+| `grandmcp_group_delete`                          | Delete a group (exported first)                                                                                                                                        | yes    |
+| `grandmcp_manual_search`, `grandmcp_manual_read` | Search and read the grandMA3 manual that ships with onPC                                                                                                               |        |
 
 The `patch_from_document` prompt walks Claude through a document-to-patch session.
 
@@ -118,10 +124,46 @@ The `patch_from_document` prompt walks Claude through a document-to-patch sessio
 | `GMA3_LIBRARY`         | OS default               | Path to `gma3_library` (used by `pnpm install-plugin`)          |
 | `GMA3_MANUAL_DIR`      | newest installed version | Path to the HTML manual (`gma3_<version>/shared/language/HTML`) |
 
+## Changing existing fixtures
+
+`grandmcp_patch_plan_changes` takes changes by current FID and checks them on the final state, so swaps (two
+fixtures trading IDs or addresses) and moves into space another change frees up work. What happens to programming:
+
+- **New FID, rename, re-address, unpatch:** safe. Groups and cues refer to the fixture itself and follow it.
+- **Remove:** the fixture disappears from groups, cues and presets that used it. The plan lists those places.
+- **New fixture type or mode:** programmed values are kept per attribute; values for attributes the new mode does not
+  have are lost. The plan lists where the fixture is used.
+
+The changes are made in one edit session: type and mode first, then IDs, names and addresses, removals last. If
+anything fails before the removals, the earlier steps are reverted and nothing changes.
+
+## Grouping fixtures
+
+Some show files organise the patch with grouping fixtures: a fixture of the MA3 library type "Grouping" (no DMX
+channels, never patched) with real fixtures under it, for example one per truss. A plan row can create a grouping
+fixture (`type: "Grouping"`, `patch: "none"`) and later rows can put new fixtures under it with `parent: <its FID>`, or
+under a grouping fixture already in the show. The patch list shows nested fixtures indented under their parent.
+Removing a grouping fixture removes the fixtures under it; the plan says so.
+
+`grandmcp_patch_move` moves fixtures that already exist under a grouping fixture, or back to the top level. FIDs,
+addresses, names, group membership and cues stay as they are, but grandMA3 moves the relocated fixtures to the end of
+the selection order of groups that contain them (re-store the group if the order matters). grandMA3 asks on the console whether the fixtures keep their
+absolute 3D position or their offset relative to the new parent: grandmcp reports that question, you answer it on the
+console, and `grandmcp_patch_move_finish` commits and verifies (or reports the cancel). Changing the type or mode of a
+fixture inside a grouping fixture is not supported yet.
+
+## Groups
+
+`grandmcp_group_store` writes a group as grandMA3's own XML and imports it into the pool slot, so it never touches
+the programmer or the current selection. Fixture order is the selection order (what MAtricks and effects follow).
+Replacing or deleting a group exports the old one to `gma3_library/datapools/groups` first.
+
 ## Safety
 
 - Read-only unless `GRANDMCP_ALLOW_WRITE=1`.
 - Patch changes always go plan → user review → apply, and the plan is bound to the patch it was made against.
+- grandmcp never answers grandMA3's pop-ups. When the console asks something, the tool reports the question and the
+  buttons, and you answer on the console.
 - The plugin refuses to write while a pop-up is open or while the command line is inside another editor (for example
   someone in the Patch menu).
 - The patch is exported before every apply. Importing that file again **merges**: it restores fixtures that were
@@ -140,8 +182,7 @@ The `patch_from_document` prompt walks Claude through a document-to-patch sessio
 
 ## Roadmap
 
-- Remove and re-address fixtures (also the clean undo for an apply)
-- Groups, presets and executor layouts generated from the patch
+- Presets and executor layouts generated from the patch
 - Cues and looks from a description
 - Connecting to a console or onPC on another machine (LAN with a token, or a grandMA3 session)
 
@@ -168,4 +209,4 @@ internals, including the behaviour the official manual does not describe.
 
 ## License
 
-MIT
+MIT, see [LICENSE](LICENSE).

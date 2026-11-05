@@ -10,7 +10,7 @@ plugin over newline-delimited JSON on TCP 127.0.0.1:9810. See README.md for the 
   (bridge socket, stored plans, library cache, write queue) lives in `src/context.ts`, never in the factory.
 - `src/bridge/`: NDJSON client (`client.ts`) and the plugin's response shapes (`types.ts`).
 - `src/patch/`: pure logic, no console access. `schema.ts` (fixture-list input), `planner.ts` (IDs, addresses,
-  conflicts), `library.ts` (fuzzy library search).
+  conflicts), `changes.ts` (changes to existing fixtures, judged on the final state), `library.ts` (fuzzy catalog search).
 - `src/tools/`: one `registerXTools(server, ctx)` per area. `result.ts` holds `ok` / `failure` / `fromError`.
 - `src/prompts/`: MCP prompts.
 - `scripts/`: `probe.ts` (dev CLI), `install-plugin.ts`, `smoke.ts` (end-to-end through a real MCP client).
@@ -32,6 +32,9 @@ plugin over newline-delimited JSON on TCP 127.0.0.1:9810. See README.md for the 
   `console.info`.
 - **Read the live patch via `ShowData().LivePatch`.** `Patch()` returns the edit copy while one is open, and
   handles taken before a commit are stale after it.
+- **Pop-ups are the user's.** Never click, key or otherwise answer an MA pop-up from code (`Mouse`/`Keyboard` exist;
+  don't use them for this). Report it with `describeModal` / `failModal` and let the user answer on the console; if a
+  flow needs an answer, split it into a start op that returns `pending` and a finish op (see `patch.move`).
 - **No dialogs on the plugin thread.** Anything that may open a pop-up goes through `CmdIndirect` and is polled
   (`waitDestination`). Writes call `guardIdle()` first.
 - **Writes are plan → review → apply.** New write tools check `ctx.allowWrite`, run inside `ctx.serialize`, and
