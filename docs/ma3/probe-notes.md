@@ -184,3 +184,17 @@ Selective="Selective"><Step Function="<function attribute>" .../></Phaser>`. Imp
 
 - `sequence:HasActivePlayback()` is true while a sequence runs (`Go+ Sequence 10` / `Off Sequence 10`).
 - No show-load hook was found: Agenda events are time based only (absolute or twilight times, repeat, valid duration).
+
+## 3D
+
+- Fixture position/rotation properties: `PosX/PosY/PosZ` (metres), `RotX/RotY/RotZ` (degrees, display has a "°"
+  suffix); settable with `Set` in the patch edit copy, committed like other patch changes.
+- `ShowData().WindowTypes` lists window types ("Window3D" is entry 1). grandMA3's own Add Window dialog runs
+  `Store ScreenContent DEFAULT '<WindowType>' MinW=.. /NC`; `Store ScreenContent <screen> "Window3D" /NC` puts a 3D
+  window on a given screen, no dialog. `ClassExists` returns false for window class names.
+- The window holds a `View3D` object; its window's `WindowSettings` is a `View3DSettings` with `Camera`, `Stage`,
+  `RenderQuality` and more. `Camera` is a reference: assign `CurrentProfile().Cameras[n]` (Auto, Front, Front/Left,
+  Left, ..., Top, 2D ...); `Set(..., "Camera", "<name>")` is silently ignored.
+- On onPC 2.5.1.1 (macOS, no MA hardware) the 3D window rendered the stage (floor grid, walls) but no fixtures or
+  beams, with 12 fixtures placed at 5 m and a cue playing; `GetDMXValue` also reads 0. Probably no visualisation
+  without output hardware; to be checked on a rig with MA hardware.

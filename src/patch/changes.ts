@@ -1,7 +1,7 @@
 import type { FixtureType, LiveFixture, LivePatch } from '../bridge/types.ts';
 
 import { findType, formatAddress, Occupancy, parseAddress, pickMode, UNIVERSE_SIZE } from './planner.ts';
-import type { PatchChangesInput } from './schema.ts';
+import { type PatchChangesInput, POSITION_FIELDS } from './schema.ts';
 
 export interface FixtureState {
 	fid: number;
@@ -22,6 +22,12 @@ export interface ChangeOps {
 	patch?: string;
 	type?: string;
 	mode?: string;
+	posX?: number;
+	posY?: number;
+	posZ?: number;
+	rotX?: number;
+	rotY?: number;
+	rotZ?: number;
 }
 
 export interface PlannedChange {
@@ -160,6 +166,12 @@ export function planChanges(input: PatchChangesInput, live: LivePatch, types: Fi
 		// After a type change the address is set again explicitly, so the result never depends on what MA keeps.
 		if (patch !== before.patch || retype) {
 			ops.patch = patch ?? '';
+		}
+
+		for (const key of POSITION_FIELDS) {
+			if (change[key] !== undefined) {
+				ops[key] = change[key];
+			}
 		}
 
 		if (Object.keys(ops).length === 1) {

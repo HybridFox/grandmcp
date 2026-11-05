@@ -316,6 +316,11 @@ function describeChanges(plan: ChangePlan, planId: string | undefined): string {
 		lines.push('');
 		for (const c of plan.changes) {
 			lines.push(c.remove || !c.after ? `REMOVE  ${describeState(c.before)}` : `CHANGE  ${describeState(c.before)}\n     ->  ${describeState(c.after)}`);
+			const position = (['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ'] as const).filter((k) => c.ops[k] !== undefined).map((k) => `${k} ${c.ops[k]}`);
+
+			if (position.length > 0) {
+				lines.push(`     3D: ${position.join(', ')}`);
+			}
 		}
 	}
 

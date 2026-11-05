@@ -37,6 +37,8 @@ export const patchPlanInputSchema = z.object({
 export type FixtureEntry = z.output<typeof fixtureEntrySchema>;
 export type PatchPlanInput = z.output<typeof patchPlanInputSchema>;
 
+export const POSITION_FIELDS = ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ'] as const;
+
 /** One change to an existing fixture, found by its current FID. */
 export const fixtureChangeSchema = z
 	.object({
@@ -51,12 +53,28 @@ export const fixtureChangeSchema = z
 			.describe('New start address ("universe.address") or "none" to unpatch.'),
 		type: z.string().min(1).optional().describe('Change to this fixture type (must be in the show). Requires mode unless the type has a single mode.'),
 		mode: z.string().min(1).optional().describe('Change to this DMX mode (of the new type, or of the current type).'),
+		posX: z.number().optional().describe('3D position in metres: X (stage left/right).'),
+		posY: z.number().optional().describe('3D position in metres: Y (downstage/upstage).'),
+		posZ: z.number().optional().describe('3D position in metres: Z (height).'),
+		rotX: z.number().optional().describe('3D rotation in degrees around X (180 = hanging upside down from a truss).'),
+		rotY: z.number().optional().describe('3D rotation in degrees around Y.'),
+		rotZ: z.number().optional().describe('3D rotation in degrees around Z (which way the fixture faces).'),
 	})
-	.refine((c) => !c.remove || (c.newFid === undefined && c.name === undefined && c.patch === undefined && c.type === undefined && c.mode === undefined), {
-		message: 'remove cannot be combined with other changes',
-	})
-	.refine((c) => c.remove || [c.newFid, c.name, c.patch, c.type, c.mode].some((v) => v !== undefined), {
-		message: 'give at least one change (remove, newFid, name, patch, type or mode)',
+	.refine(
+		(c) =>
+			!c.remove ||
+			(POSITION_FIELDS.every((k) => c[k] === undefined) &&
+				c.newFid === undefined &&
+				c.name === undefined &&
+				c.patch === undefined &&
+				c.type === undefined &&
+				c.mode === undefined),
+		{
+			message: 'remove cannot be combined with other changes',
+		},
+	)
+	.refine((c) => c.remove || [c.newFid, c.name, c.patch, c.type, c.mode, ...POSITION_FIELDS.map((k) => c[k])].some((v) => v !== undefined), {
+		message: 'give at least one change (remove, newFid, name, patch, type, mode or a 3D position/rotation)',
 	});
 
 export const patchChangesInputSchema = z.object({

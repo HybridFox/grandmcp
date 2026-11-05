@@ -52,7 +52,7 @@ change is complete. MA cannot undo a patch commit, so every apply first exports 
     Plugin "grandmcp"
     ```
 
-    The command line history should show `grandmcp 0.12.0 listening on 127.0.0.1:9810`. Save the show to keep the
+    The command line history should show `grandmcp 0.14.0 listening on 127.0.0.1:9810`. Save the show to keep the
     plugin in it. The plugin has to be started again after loading a show.
 
 3. Add the server to your MCP client. For Claude Code:
@@ -98,10 +98,12 @@ change is complete. MA cannot undo a patch commit, so every apply first exports 
 | `grandmcp_sequence_store`                        | Create or replace a sequence whose cues reference presets and/or carry values, with timing and triggers                                                                | yes    |
 | `grandmcp_executor_list`                         | What is assigned to the executors of a page                                                                                                                            |        |
 | `grandmcp_executor_assign`                       | Put a sequence on an executor                                                                                                                                          | yes    |
+| `grandmcp_view3d`                                | Put grandMA3's 3D window on a screen (adds one if needed) and pick a camera                                                                                            | yes    |
 | `grandmcp_screenshot`                            | A screenshot of a grandMA3 screen, rendered by grandMA3 itself                                                                                                         |        |
 | `grandmcp_manual_search`, `grandmcp_manual_read` | Search and read the grandMA3 manual that ships with onPC                                                                                                               |        |
 
-The `patch_from_document` prompt walks Claude through a document-to-patch session.
+The `patch_from_document` prompt walks Claude through a document-to-patch session, and `build_busking_show` through
+building groups, palettes, effects and executors for playing live, with you deciding the layout.
 
 ## Patching from a document
 
@@ -185,6 +187,10 @@ on executors. Everything is written as grandMA3 XML and imported, so the program
 - **Executors** (`grandmcp_executor_assign`) put a sequence on a fader or button of a page. Something already on the
   executor is only replaced with `overwrite`.
 
+**3D**: `grandmcp_patch_plan_changes` also sets fixture positions and rotations (`posX/posY/posZ` in metres,
+`rotX/rotY/rotZ` in degrees, for example `rotX: 180` for fixtures hanging from a truss). `grandmcp_view3d` puts the 3D
+window on a screen with a camera of your choice, and `grandmcp_screenshot` lets Claude look at it.
+
 Replacing a preset or sequence exports the old one to `gma3_library/datapools/presets` or `.../sequences` first.
 
 ## Safety
@@ -211,12 +217,13 @@ Replacing a preset or sequence exports the old one to `gma3_library/datapools/pr
 - Share imports need the console to reach MA's World Server (internet).
 - The plugin has to be started after every show load (`Plugin "grandmcp"`); grandMA3 has no show-load hook to start it
   automatically. Putting that command on a macro button is the easy way.
-- `grandmcp_screenshot` shows what is on a grandMA3 screen; to judge a look, put a 3D window on that screen.
+- `grandmcp_screenshot` shows what is on a grandMA3 screen. On onPC 2.5.1 on a Mac without MA hardware, the 3D window
+  showed the stage but no fixtures or beams while a cue was playing; looking at looks may need MA hardware or a
+  console. Not verified yet.
 - The plugin only listens on 127.0.0.1. Driving a console on another machine is planned (see below).
 
 ## Roadmap
 
-- A guided prompt for building a busking show with these tools (the layout itself stays your design)
 - Executor options (fader and button functions) and speed master BPM
 - Cues and looks from a description
 - Connecting to a console or onPC on another machine (LAN with a token, or a grandMA3 session)

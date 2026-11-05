@@ -2,6 +2,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 
+import { registerBuildBuskingShowPrompt } from './prompts/buildBuskingShow.ts';
 import { registerPatchFromDocumentPrompt } from './prompts/patchFromDocument.ts';
 import { registerGroupTools } from './tools/groups.ts';
 import { registerInspectTools } from './tools/inspect.ts';
@@ -30,6 +31,7 @@ serveStdio(() => {
 	registerScreenshotTools(server, ctx);
 	registerManualTools(server, ctx);
 	registerPatchFromDocumentPrompt(server);
+	registerBuildBuskingShowPrompt(server);
 
 	return server;
 });

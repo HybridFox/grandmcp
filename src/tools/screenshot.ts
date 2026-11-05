@@ -12,6 +12,44 @@ export function joinBlocks(blocks: string[]): Buffer {
 
 export function registerScreenshotTools(server: McpServer, ctx: AppContext): void {
 	server.registerTool(
+		'grandmcp_view3d',
+		{
+			title: '3D view',
+			description: [
+				"Make sure grandMA3's 3D window is on a screen (adds one if there is none, which changes that screen's layout) and optionally pick a camera (Front, Top, Front/Left, Auto, ...).",
+				'Use it before grandmcp_screenshot to look at a look. On onPC without MA hardware the 3D view may not draw fixtures and beams.',
+			].join(' '),
+			inputSchema: z.object({
+				screen: z.number().int().min(1).max(16).default(1),
+				camera: z.string().min(1).optional().describe('Camera name, e.g. "Front", "Top", "Front/Left", "Auto".'),
+			}),
+			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+		},
+		async ({ screen, camera }) => {
+			try {
+				const result = await ctx.serialize(() =>
+					ctx.bridge.request<{ screen: number; created: boolean; camera: string; cameras: string[] }>('view3d', {
+						screen,
+						...(camera ? { camera } : {}),
+					}),
+				);
+
+				return {
+					content: [
+						{
+							type: 'text',
+							text: `${result.created ? 'Added a 3D window to' : '3D window on'} screen ${result.screen}, camera ${result.camera}. Cameras: ${result.cameras.join(', ')}.`,
+						},
+					],
+					structuredContent: result,
+				};
+			} catch (error) {
+				return fromError(error);
+			}
+		},
+	);
+
+	server.registerTool(
 		'grandmcp_screenshot',
 		{
 			title: 'Screenshot',

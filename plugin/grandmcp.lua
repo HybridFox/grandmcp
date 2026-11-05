@@ -12,7 +12,7 @@ local myHandle = select(4, ...)
 local socket = require("socket")
 local json = require("json")
 
-local VERSION = "0.12.0"
+local VERSION = "0.14.0"
 local HOST = "127.0.0.1" -- unauthenticated: never bind beyond loopback
 local PORT = 9810
 local MAX_LINES_PER_TICK = 32
@@ -748,7 +748,7 @@ ops["patch.change"] = function(args)
 		for _, t in ipairs(targets) do
 			local c, f = t.change, t.fixture
 			if not c.remove then
-				for _, field in ipairs({ { "newFid", "FID" }, { "name", "Name" }, { "patch", "Patch" } }) do
+				for _, field in ipairs({ { "newFid", "FID" }, { "name", "Name" }, { "patch", "Patch" }, { "posX", "PosX" }, { "posY", "PosY" }, { "posZ", "PosZ" }, { "rotX", "RotX" }, { "rotY", "RotY" }, { "rotZ", "RotZ" } }) do
 					local value = c[field[1]]
 					if value ~= nil then
 						local old = display(f, field[2]) or ""
@@ -794,6 +794,16 @@ ops["patch.change"] = function(args)
 				ok = row ~= nil
 					and (c.name == nil or row.name == c.name)
 					and (c.patch == nil or (row.patch or "") == c.patch)
+					and (function()
+						for _, field in ipairs({ { "posX", "PosX" }, { "posY", "PosY" }, { "posZ", "PosZ" }, { "rotX", "RotX" }, { "rotY", "RotY" }, { "rotZ", "RotZ" } }) do
+							local want = c[field[1]]
+							if want ~= nil then
+								local have = tonumber(tostring(display(f, field[2]) or ""):match("(-?[%d%.]+)"))
+								if not have or math.abs(have - want) > 0.01 then return false end
+							end
+						end
+						return true
+					end)()
 					and (c.type == nil or (row.type == c.type and row.mode == c.mode))
 					and not row.conflicted
 			end
@@ -1768,6 +1778,56 @@ ops["screen.capture"] = function(args)
 	until images[slot] == nil or socket.gettime() - t0 > 3
 	if #blocks == 0 then fail("capture-failed", "the screenshot could not be read back") end
 	return { screen = screen, blocks = blocks }
+end
+
+local function find3dSettings(screen)
+	local d = GetDisplayByIndex(screen)
+	if not d then return nil end
+	local view
+	local function walk(h, depth)
+		if depth > 10 or view then return end
+		for _, c in ipairs(h:Children()) do
+			if c:GetClass() == "View3D" then
+				view = c
+				return
+			end
+			walk(c, depth + 1)
+		end
+	end
+	walk(d, 0)
+	local window = view and view:Parent() and view:Parent():Parent() and view:Parent():Parent():Parent()
+	return window and window.WindowSettings
+end
+
+-- args: { screen = 1, camera = "Front" } -> makes sure a 3D window is on the screen and picks the camera.
+ops["view3d"] = function(args)
+	local screen = math.tointeger(args.screen) or 1
+	local cameras = {}
+	for _, cam in ipairs(CurrentProfile().Cameras:Children()) do cameras[#cameras + 1] = cam.name end
+	local settings = find3dSettings(screen)
+	local created = false
+	if not settings then
+		guardIdle()
+		-- The same command grandMA3's own Add Window dialog uses.
+		CmdIndirect(string.format('Store ScreenContent %d "Window3D" /NC', screen))
+		local t0 = socket.gettime()
+		repeat
+			coroutine.yield(0.1)
+			if GetTopModal() ~= nil then failModal("a pop-up opened while adding the 3D window") end
+			settings = find3dSettings(screen)
+		until settings or socket.gettime() - t0 > 5
+		if not settings then fail("view-failed", "could not add a 3D window to screen " .. screen) end
+		created = true
+	end
+	if args.camera ~= nil then
+		local wanted, cam = tostring(args.camera):lower(), nil
+		for _, c in ipairs(CurrentProfile().Cameras:Children()) do
+			if c.name:lower() == wanted then cam = c end
+		end
+		if not cam then fail("not-found", "no camera '" .. tostring(args.camera) .. "' (cameras: " .. table.concat(cameras, ", ") .. ")") end
+		settings.Camera = cam -- a reference property: assign the object, a string is ignored
+	end
+	return { screen = screen, created = created, camera = display(settings, "Camera"), cameras = cameras }
 end
 
 -- Probe ops for development; disabled unless started with "dev".
