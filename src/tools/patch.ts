@@ -209,10 +209,16 @@ export function registerPatchTools(server: McpServer, ctx: AppContext): void {
 				'Write a plan from grandmcp_patch_plan or grandmcp_patch_plan_changes to the console: backs up the live patch to gma3_library/patch, makes the changes in the patch edit copy, commits and reads everything back.',
 				'The commit cannot be undone on the console; the backup XML is the record to recover from. Refused when the patch changed since the plan was made.',
 			].join(' '),
-			inputSchema: z.object({ planId: z.string().min(1) }),
+			inputSchema: z.object({
+				planId: z.string().min(1),
+				duringPlayback: z
+					.boolean()
+					.default(false)
+					.describe('Allow this while sequences are running. Only after the user explicitly agreed: it can change what the audience sees.'),
+			}),
 			annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
 		},
-		async ({ planId }) => {
+		async ({ planId, duringPlayback }) => {
 			if (!ctx.allowWrite) {
 				return WRITES_DISABLED;
 			}
@@ -231,7 +237,7 @@ export function registerPatchTools(server: McpServer, ctx: AppContext): void {
 						return failure('The patch changed since this plan was made. Plan again and show the user the new plan.');
 					}
 
-					return stored.kind === 'add' ? applyAdd(ctx, stored.plan) : applyChanges(ctx, stored.plan);
+					return stored.kind === 'add' ? applyAdd(ctx, stored.plan, duringPlayback) : applyChanges(ctx, stored.plan, duringPlayback);
 				});
 			} catch (error) {
 				return fromError(error);
@@ -255,7 +261,7 @@ function summarize(result: PatchAddResult, count: number, what: string): string 
 	return `${summary}\nBackup of the previous patch: ${result.backup}`;
 }
 
-async function applyAdd(ctx: AppContext, plan: PatchPlan): Promise<CallToolResult> {
+async function applyAdd(ctx: AppContext, plan: PatchPlan, duringPlayback: boolean): Promise<CallToolResult> {
 	const fixtures = plan.fixtures.map((f) => ({
 		fid: f.fid,
 		name: f.name,
@@ -264,7 +270,7 @@ async function applyAdd(ctx: AppContext, plan: PatchPlan): Promise<CallToolResul
 		...(f.patch ? { patch: f.patch } : {}),
 		...(f.parent ? { parent: f.parent } : {}),
 	}));
-	const result = await ctx.bridge.request<PatchAddResult>('patch.add', { stage: plan.stage, fixtures }, 30_000 + fixtures.length * 200);
+	const result = await ctx.bridge.request<PatchAddResult>('patch.add', { stage: plan.stage, fixtures, duringPlayback }, 30_000 + fixtures.length * 200);
 
 	return ok(
 		{ backup: result.backup, verified: result.verified, failed: result.results.filter((r) => !r.ok) },
@@ -272,9 +278,9 @@ async function applyAdd(ctx: AppContext, plan: PatchPlan): Promise<CallToolResul
 	);
 }
 
-async function applyChanges(ctx: AppContext, plan: ChangePlan): Promise<CallToolResult> {
+async function applyChanges(ctx: AppContext, plan: ChangePlan, duringPlayback: boolean): Promise<CallToolResult> {
 	const changes = plan.changes.map((c) => c.ops);
-	const result = await ctx.bridge.request<PatchAddResult>('patch.change', { changes }, 60_000 + changes.length * 500);
+	const result = await ctx.bridge.request<PatchAddResult>('patch.change', { changes, duringPlayback }, 60_000 + changes.length * 500);
 
 	return ok(
 		{ backup: result.backup, verified: result.verified, failed: result.results.filter((r) => !r.ok) },

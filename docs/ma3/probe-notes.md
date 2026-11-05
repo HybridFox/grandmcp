@@ -129,3 +129,58 @@ Verified live through the bridge's dev `lua` op on 2026-11-05. `lua_functions_2.
   "Text", and the answers are `Button`s under the `Commands` grid (`Text`, `AbsRect`).
 - `Mouse(display, "move"/"press"/"release", ...)` could click them, but grandmcp deliberately never answers pop-ups:
   they are reported to the user, who answers on the console.
+
+## Fixture attributes
+
+- Mode -> `DMXChannels` -> channel (`Coarse`/`Fine` offsets) -> `LogicalChannel` (`Attribute`) -> channel functions
+  (`Attribute`, `DMXFrom`/`DMXTo` as 24-bit hex, `PhysicalFrom`/`PhysicalTo`) -> channel sets (named slots, DMX range
+  only; their physical values are 0). Several functions of one channel can share an attribute name (the Robin's
+  COLORMIXER has three "ColorMacro" functions). Function names carry an index suffix ("Shutter1Strobe 2").
+
+## Presets
+
+- Pools: 1 Dimmer, 2 Position, 3 Gobo, 4 Color, 5 Beam, 6 Focus, 7 Control, 8 Shapers, 9 Video, 21-25 All.
+  `pool:Count()` is the slot capacity (1000) once used; the All pools have no slots in a new show, so `Create` fails
+  there until something was stored. `Copy Preset` / `Move Preset` into such a pool works and initialises it.
+- Preset XML: `<Preset Name=..><PresetData><Phaser IDType="0" ID="<fid>" Attribute=".." GridPos=".."
+Selective="Selective"><Step Function="<function attribute>" .../></Phaser>`. Importing into a preset replaces it.
+- Step values: `Absolute` = percent of the **whole channel** (all functions), i.e. exact DMX (DMX = pct/100 * FFFFFF),
+  and MA derives the function from it. `AbsolutePhys` = physical value of the function named in `Function`, which is
+  ambiguous when functions share an attribute (Congo blue landed on DMX 0). grandmcp writes `Absolute`.
+- `GetPresetData(preset).by_fixtures[fid][attr]` reads it back: per step `absolute_value` (24-bit DMX, full = 2^24),
+  `absolute` (percent within the function), `channel_function` (0-based); per phaser `speed`, `phase`, `measure`.
+- MA's own Store records dimmer and colour presets as Universal (one sample per fixture type) by default.
+
+## Effects (phasers)
+
+- A phaser is a `Phaser` with several `Step`s: `Speed` (2^24 = 1 cycle per second = 60 BPM), `Phase` (degrees,
+  per fixture), `Measure` (2^24 = 100 %), `SpeedMaster` ("Speed1".."Speed16"; a bare number is misread as an index,
+  a full path is ignored). Steps: value plus `Width`, `Trans` (0 snap .. 100 fade), `Accel`, `Decel` in percent.
+- MA's library effects are in `shared/resource/lib_presets/predefined_phaser.xml` (Universal, IDType 2).
+- Speed masters: `MasterPool().Speed` holds Speed1..Speed16.
+
+## Sequences and executors
+
+- Sequence XML must start with `<Cue Name="OffCue" ...>` and `<Cue Name="CueZero" No="0">`; cues are mapped by
+  position, so without them the first cues land on OffCue/CueZero. Cue names are read from the `Part`'s `Name`.
+- Timing on the Part (`CueInFade`, `CueOutFade`, `CueInDelay`, `CueOutDelay`, per-feature `Preset<n>Fade`), trigger on
+  the Cue (`TrigType` Go/Follow/Time, `TrigTime`).
+- A preset reference in a cue: `AbsPreset="s4.20"` (pool.no) on the Phaser, values prefixed with `*`; MA exports it as
+  `AbsPreset="sColor.'Name'"` and embeds a copy of the preset under `DependencyExport`.
+- Importing over an existing sequence keeps leftovers (CueZero timing); delete and recreate instead.
+- `Assign Sequence <n> At Page <p>.<exec>` assigns without a dialog and silently replaces what was there. Page
+  children are the existing executors; find one by `No`, not by child index.
+- Typing `Preset 4.20` after a selection does not load it into the programmer; `At Preset 4.20` does.
+
+## Screenshots
+
+- `Store Image 3.<n> /Screen "<screen>" /ScreenOnly "Yes"|"No"` stores a screenshot of a grandMA3 screen in image pool 3
+  (`ShowData().MediaPools.Images`), no dialog. `image:Export(dir, file)` writes the PNG as `<Block Base64="...">`
+  chunks, each encoded on its own: decode each block and join the bytes. Print Screen / F11 also saves PNGs to
+  `gma3_library/media/images`.
+- osascript cannot read window bounds without Accessibility permission, so screenshots go through grandMA3 instead.
+
+## Playback and startup
+
+- `sequence:HasActivePlayback()` is true while a sequence runs (`Go+ Sequence 10` / `Off Sequence 10`).
+- No show-load hook was found: Agenda events are time based only (absolute or twilight times, repeat, valid duration).

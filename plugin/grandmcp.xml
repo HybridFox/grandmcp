@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <GMA3 DataVersion="0.8.84.0">
-    <UserPlugin Name="grandmcp" Author="grandmcp" Version="0.7.0">
+    <UserPlugin Name="grandmcp" Author="grandmcp" Version="0.12.0">
         <ComponentLua Name="grandmcp" FileName="grandmcp.lua" />
     </UserPlugin>
 </GMA3>

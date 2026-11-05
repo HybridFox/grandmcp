@@ -15,6 +15,8 @@ export function fromError(error: unknown): CallToolResult {
 
 		if (error.outcome === 'unknown') {
 			hint = ' The request was sent but not answered, so the console may have acted: read its state before retrying.';
+		} else if (error.code === 'playback-running') {
+			hint = ' Ask the user whether to go ahead during the show; only then retry with duringPlayback.';
 		} else if (error.code === 'modal-open') {
 			hint = ' Pop-ups on the console are for the user to answer: tell them what it asks and wait for them.';
 		}

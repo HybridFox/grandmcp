@@ -50,16 +50,22 @@ export function registerMoveTools(server: McpServer, ctx: AppContext): void {
 			inputSchema: z.object({
 				fids: z.array(z.number().int().min(1)).min(1).max(1000),
 				parent: z.number().int().min(1).optional().describe('FID of the target grouping fixture; omit to move to the top level.'),
+				duringPlayback: z
+					.boolean()
+					.default(false)
+					.describe('Allow this while sequences are running. Only after the user explicitly agreed: it can change what the audience sees.'),
 			}),
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
 		},
-		async ({ fids, parent }) => {
+		async ({ fids, parent, duringPlayback }) => {
 			if (!ctx.allowWrite) {
 				return WRITES_DISABLED;
 			}
 
 			try {
-				return report(await ctx.serialize(() => ctx.bridge.request<MoveResult>('patch.move', { fids, ...(parent ? { parent } : {}) }, 60_000)));
+				return report(
+					await ctx.serialize(() => ctx.bridge.request<MoveResult>('patch.move', { fids, duringPlayback, ...(parent ? { parent } : {}) }, 60_000)),
+				);
 			} catch (error) {
 				return fromError(error);
 			}

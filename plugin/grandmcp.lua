@@ -12,7 +12,7 @@ local myHandle = select(4, ...)
 local socket = require("socket")
 local json = require("json")
 
-local VERSION = "0.7.0"
+local VERSION = "0.12.0"
 local HOST = "127.0.0.1" -- unauthenticated: never bind beyond loopback
 local PORT = 9810
 local MAX_LINES_PER_TICK = 32
@@ -137,6 +137,17 @@ ops.info = function()
 		showFileStatus = GetShowFileStatus(),
 		modalOpen = GetTopModal() ~= nil,
 		dialog = describeModal(GetTopModal()),
+		runningSequences = (function()
+			local ok, list = pcall(function()
+				local running = {}
+				for _, seq in ipairs(DataPool().Sequences:Children()) do
+					local okActive, active = pcall(seq.HasActivePlayback, seq)
+					if okActive and active then running[#running + 1] = seq.name end
+				end
+				return running
+			end)
+			return ok and list or {}
+		end)(),
 		commandLine = CmdObj():Get("Destination", Enums.Roles.Display),
 		dev = devEnabled(),
 	}
@@ -340,6 +351,24 @@ local function guardIdle()
 	end
 end
 
+local function runningSequences()
+	local running = {}
+	for _, seq in ipairs(DataPool().Sequences:Children()) do
+		local ok, active = pcall(seq.HasActivePlayback, seq)
+		if ok and active then running[#running + 1] = string.format("%s '%s'", tostring(display(seq, "No")):match("^%d+") or "?", tostring(seq.name)) end
+	end
+	return running
+end
+
+-- Patch changes while a show is playing can hit what the audience sees, so they need an explicit go-ahead.
+local function guardPlayback(args)
+	if args.duringPlayback then return end
+	local running = runningSequences()
+	if #running > 0 then
+		fail("playback-running", "sequences are running (" .. table.concat(running, ", ") .. "); patch changes now could affect the live output. Stop them, or confirm with the user and pass duringPlayback.")
+	end
+end
+
 local function waitDestination(expected, timeout)
 	local t0 = socket.gettime()
 	while socket.gettime() - t0 < (timeout or 5) do
@@ -478,6 +507,7 @@ ops["patch.importType"] = function(args)
 	local file = checkName(args.file, "file")
 	local path = type(args.path) == "string" and args.path ~= "" and args.path or nil
 	guardIdle()
+	guardPlayback(args)
 	if not catalogReady() then loadCatalog() end
 	local liveBefore = ShowData().LivePatch.FixtureTypes:Count()
 
@@ -521,6 +551,7 @@ ops["patch.add"] = function(args)
 	local stageName = checkName(args.stage, "stage")
 	if type(args.fixtures) ~= "table" or #args.fixtures == 0 then fail("bad-args", "fixtures must be a non-empty array") end
 	guardIdle()
+	guardPlayback(args)
 
 	local live = ShowData().LivePatch
 	if not live.Stages[stageName] then fail("not-found", "no stage '" .. stageName .. "'") end
@@ -663,6 +694,7 @@ end
 ops["patch.change"] = function(args)
 	if type(args.changes) ~= "table" or #args.changes == 0 then fail("bad-args", "changes must be a non-empty array") end
 	guardIdle()
+	guardPlayback(args)
 	local live = ShowData().LivePatch
 	for _, c in ipairs(args.changes) do
 		if not findFixture(live, c.fid) then fail("not-found", "no fixture with FID " .. tostring(c.fid)) end
@@ -832,6 +864,7 @@ ops["patch.move"] = function(args)
 	if type(args.fids) ~= "table" or #args.fids == 0 then fail("bad-args", "fids must be a non-empty array") end
 	if pendingMove then fail("busy", "a move is waiting for an answer on the console; call patch.moveFinish first") end
 	guardIdle()
+	guardPlayback(args)
 	local live = ShowData().LivePatch
 	local parent = args.parent ~= nil and math.tointeger(args.parent) or nil
 
@@ -1065,6 +1098,676 @@ ops["group.delete"] = function(args)
 	until DataPool().Groups[no] == nil or socket.gettime() - t0 > 5
 	if DataPool().Groups[no] ~= nil then fail("delete-failed", "group " .. no .. " still exists") end
 	return { no = no, backup = backup }
+end
+
+---------------------------------------------------------------------------
+-- Fixture attributes and presets. Presets are written as MA XML: every value becomes a channel function plus a
+-- physical value (AbsolutePhys), which MA imports exactly. ("Absolute" in XML means percent of the whole channel
+-- across all its functions, which is not what anyone means by "50 %", so it is avoided.)
+---------------------------------------------------------------------------
+
+local function num(text)
+	return tonumber((tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")))
+end
+
+local function hex(text)
+	return tonumber(tostring(text or ""):match("%x+") or "", 16)
+end
+
+-- attribute -> { functions = [{ name, attribute, dmxFrom, dmxTo, physFrom, physTo, slots = [{ name, dmxFrom, dmxTo }] }] }
+local function attributeMap(mode)
+	local map, order = {}, {}
+	for _, ch in ipairs(mode.DMXChannels:Children()) do
+		for _, lc in ipairs(ch:Children()) do
+			local attr = display(lc, "Attribute")
+			if attr and attr ~= "" then
+				local entry = map[attr]
+				if not entry then
+					entry = { attribute = attr, functions = {} }
+					map[attr] = entry
+					order[#order + 1] = attr
+				end
+				for _, cf in ipairs(lc:Children()) do
+					local fn = {
+						name = (cf.name or ""):match("^%s*(.-)%s*$"),
+						attribute = display(cf, "Attribute"),
+						dmxFrom = hex(display(cf, "DMXFrom")),
+						dmxTo = hex(display(cf, "DMXTo")),
+						physFrom = num(display(cf, "PhysicalFrom")),
+						physTo = num(display(cf, "PhysicalTo")),
+						slots = {},
+					}
+					for _, cs in ipairs(cf:Children()) do
+						local slotName = (cs.name or ""):match("^%s*(.-)%s*$")
+						if slotName ~= "" and slotName ~= "No Feature" then
+							fn.slots[#fn.slots + 1] = { name = slotName, dmxFrom = hex(display(cs, "DMXFrom")), dmxTo = hex(display(cs, "DMXTo")) }
+						end
+					end
+					entry.functions[#entry.functions + 1] = fn
+				end
+			end
+		end
+	end
+	return map, order
+end
+
+-- "Shutter1Strobe", "Shutter1Strobe 2" and the function's attribute all name the same channel function.
+local function fnMatches(fn, wanted)
+	wanted = tostring(wanted):lower()
+	local name = fn.name:lower()
+	return name == wanted or name:gsub("%s+%d+$", "") == wanted or tostring(fn.attribute or ""):lower() == wanted
+end
+
+local function physToDmx(fn, phys)
+	if fn.physTo == fn.physFrom then return fn.dmxFrom end
+	return math.floor(fn.dmxFrom + (phys - fn.physFrom) / (fn.physTo - fn.physFrom) * (fn.dmxTo - fn.dmxFrom) + 0.5)
+end
+
+local function dmxToPhys(fn, dmx)
+	if fn.dmxTo == fn.dmxFrom then return fn.physFrom end
+	return fn.physFrom + (dmx - fn.dmxFrom) / (fn.dmxTo - fn.dmxFrom) * (fn.physTo - fn.physFrom)
+end
+
+-- One requested value -> { fn, phys, dmxMin, dmxMax } for a fixture's attribute.
+-- value: { slot = "C3" } | { percent = 0..100 } | { physical = number }, optional function = "<function name>".
+local function resolveValue(entry, value, label)
+	local fns = entry.functions
+	if type(value.slot) == "string" then
+		local wanted = value.slot:lower()
+		for _, fn in ipairs(fns) do
+			if value["function"] == nil or fnMatches(fn, value["function"]) then
+				for _, slot in ipairs(fn.slots) do
+					if slot.name:lower() == wanted then
+						local center = (slot.dmxFrom + slot.dmxTo) // 2
+						return { fn = fn, phys = dmxToPhys(fn, center), dmxMin = slot.dmxFrom, dmxMax = slot.dmxTo }
+					end
+				end
+			end
+		end
+		local names = {}
+		for _, fn in ipairs(fns) do
+			for _, slot in ipairs(fn.slots) do names[#names + 1] = slot.name end
+		end
+		fail("bad-value", label .. ": no slot '" .. value.slot .. "' (slots: " .. table.concat(names, ", ") .. ")")
+	end
+	local fn = fns[1]
+	if value["function"] ~= nil then
+		fn = nil
+		for _, f in ipairs(fns) do
+			if not fn and fnMatches(f, value["function"]) then fn = f end
+		end
+		if not fn then fail("bad-value", label .. ": no function '" .. tostring(value["function"]) .. "'") end
+	end
+	if not fn then fail("bad-value", label .. ": attribute has no channel functions") end
+	local phys
+	if type(value.percent) == "number" then
+		phys = fn.physFrom + math.max(0, math.min(100, value.percent)) / 100 * (fn.physTo - fn.physFrom)
+	elseif type(value.physical) == "number" then
+		local lo, hi = math.min(fn.physFrom, fn.physTo), math.max(fn.physFrom, fn.physTo)
+		if value.physical < lo - 1e-6 or value.physical > hi + 1e-6 then
+			fail("bad-value", string.format("%s: %s is outside %s..%s", label, tostring(value.physical), tostring(fn.physFrom), tostring(fn.physTo)))
+		end
+		phys = value.physical
+	else
+		fail("bad-value", label .. ": give slot, percent or physical")
+	end
+	local dmx = physToDmx(fn, phys)
+	local tolerance = math.max(0x020202, math.abs(fn.dmxTo - fn.dmxFrom) // 100)
+	return { fn = fn, phys = phys, dmxMin = math.max(0, dmx - tolerance), dmxMax = math.min(0xFFFFFF, dmx + tolerance), exact = dmx }
+end
+
+local function poolOf(no)
+	local pool = DataPool().PresetPools[math.tointeger(no) or -1]
+	if not pool then fail("not-found", "no preset pool " .. tostring(no)) end
+	return pool
+end
+
+-- args: { type, mode? } -> the type's attributes with functions, physical ranges and named slots.
+ops["fixture.attributes"] = function(args)
+	local ft = ShowData().LivePatch.FixtureTypes[checkName(args.type, "type")]
+	if not ft then fail("not-found", "fixture type '" .. tostring(args.type) .. "' is not in the show") end
+	local mode = args.mode and ft.DMXModes[args.mode] or ft.DMXModes:Ptr(1)
+	if not mode then fail("not-found", "no mode '" .. tostring(args.mode) .. "'") end
+	local map, order = attributeMap(mode)
+	local out = {}
+	for _, attr in ipairs(order) do
+		local fns = {}
+		for i, fn in ipairs(map[attr].functions) do
+			local slots = {}
+			for j, slot in ipairs(fn.slots) do slots[j] = slot.name end
+			fns[i] = { name = fn.name, attribute = fn.attribute, physFrom = fn.physFrom, physTo = fn.physTo, slots = slots }
+		end
+		out[#out + 1] = { attribute = attr, functions = fns }
+	end
+	return { type = ft.name, mode = mode.name, attributes = out }
+end
+
+ops["preset.list"] = function(args)
+	local out = {}
+	for _, pool in ipairs(DataPool().PresetPools:Children()) do
+		local poolNo = tonumber(tostring(display(pool, "No")):match("^%d+"))
+		if args.pool == nil or poolNo == math.tointeger(args.pool) then
+			for _, p in ipairs(pool:Children()) do
+				local fixtures, attrs = {}, {}
+				local okData, data = pcall(GetPresetData, p)
+				if okData and type(data) == "table" and type(data.by_fixtures) == "table" then
+					for fid, values in pairs(data.by_fixtures) do
+						fixtures[#fixtures + 1] = tonumber(fid)
+						for attr in pairs(values) do attrs[attr] = true end
+					end
+				end
+				local attrList = {}
+				for attr in pairs(attrs) do attrList[#attrList + 1] = attr end
+				table.sort(fixtures)
+				table.sort(attrList)
+				out[#out + 1] = { pool = poolNo, poolName = pool.name, no = tonumber(tostring(display(p, "No")):match("^%d+")), name = p.name, fixtures = fixtures, attributes = attrList }
+			end
+		end
+	end
+	return out
+end
+
+-- args: { pool, no, name, overwrite, entries = [{ fids = [...], values = { <attribute> = value } }] }
+ops["preset.store"] = function(args)
+	local pool = poolOf(args.pool)
+	local no = groupNo(args.no)
+	local name = args.name
+	if type(name) ~= "string" or name == "" or #name > 200 then fail("bad-args", "name must be a non-empty string") end
+	if type(args.entries) ~= "table" or #args.entries == 0 then fail("bad-args", "entries must be a non-empty array") end
+	local existing = pool[no]
+	if existing and not args.overwrite then
+		fail("exists", string.format("preset %s.%d already exists ('%s'); pass overwrite to replace it", tostring(args.pool), no, tostring(existing.name)))
+	end
+
+	local live = ShowData().LivePatch
+	local maps, phasers, expected, problems = {}, {}, {}, {}
+	local gridPos = 0
+	local seenFid = {}
+	local effects = {}
+	for _, entry in ipairs(args.entries) do
+		local entryCount = #(entry.fids or {})
+		for entryIndex, value in ipairs(entry.fids or {}) do
+			local fid = math.tointeger(value)
+			local f = fid and findFixture(live, fid)
+			if not f then
+				problems[#problems + 1] = "no fixture with FID " .. tostring(value)
+				problems[problems[#problems]] = {}
+			elseif seenFid[fid] then
+				problems[#problems + 1] = "FID " .. fid .. " appears in more than one entry"
+				problems[problems[#problems]] = {}
+			else
+				seenFid[fid] = true
+				local mode = f:Get("ModeDirect")
+				local key = mode and mode:ToAddr() or "?"
+				maps[key] = maps[key] or (mode and attributeMap(mode))
+				local map = maps[key] or {}
+				local typeName = f:Get("FixtureType") and f:Get("FixtureType").name or "?"
+				for attr, v in pairs(entry.values or {}) do
+					local label = string.format("%s %s", typeName, attr)
+					local function problem(message)
+						if not problems[message] then
+							problems[message] = {}
+							problems[#problems + 1] = message
+						end
+						table.insert(problems[message], fid)
+					end
+					if not map[attr] then
+						problem(label .. ": this fixture type has no such attribute")
+					elseif type(v.effect) == "table" then
+						-- An effect (phaser): steps, speed in BPM, phase spread over the entry's fixtures.
+						local eff = v.effect
+						local ok, built = pcall(function()
+							if type(eff.steps) ~= "table" or #eff.steps < 2 or #eff.steps > 48 then fail("bad-value", label .. ": an effect needs 2 to 48 steps") end
+							local bpm = tonumber(eff.bpm) or 60
+							local master = math.tointeger(eff.speedMaster)
+							if eff.speedMaster ~= nil and (not master or master < 1 or master > 16) then fail("bad-value", label .. ": speedMaster must be 1-16") end
+							if bpm <= 0 or bpm > 3000 then fail("bad-value", label .. ": bpm must be between 0 and 3000") end
+							local spread = type(eff.phase) == "table" and eff.phase or {}
+							local from, to = tonumber(spread.from) or 0, tonumber(spread.to) or 0
+							local phase = from + (to - from) * (entryIndex - 1) / math.max(1, entryCount)
+							local stepXml, stepRanges = {}, {}
+							for si, step in ipairs(eff.steps) do
+								local r = resolveValue(map[attr], step, label .. " step " .. si)
+								local target = r.exact or (r.dmxMin + r.dmxMax) // 2
+								stepXml[si] = string.format('<Step Function="%s" Absolute="%.6f" Accel="0" Decel="0" Trans="%s" Width="%s"/>',
+									xmlEscape(r.fn.attribute or attr), target / 0xFFFFFF * 100, tostring(tonumber(step.trans) or 100), tostring(tonumber(step.width) or 100))
+								stepRanges[si] = { min = r.dmxMin, max = r.dmxMax }
+							end
+							return {
+								-- SpeedMaster takes the master's name ("Speed1"); a bare number is misread as an index.
+								xml = string.format('            <Phaser IDType="0" ID="%d" Attribute="%s" Speed="%d" SpeedMaster="%s" Phase="%s" Measure="16777216" GridPos="%d" GridPosMatr="%d" Selective="Selective">%s</Phaser>',
+									fid, xmlEscape(attr), math.floor(bpm / 60 * 16777216 + 0.5), master and ("Speed" .. master) or "None", string.format("%.4f", phase), gridPos, gridPos, table.concat(stepXml)),
+								effect = { fid = fid, attribute = attr, speed = bpm / 60, phase = phase % 360, steps = stepRanges, master = master },
+							}
+						end)
+						if not ok then
+							problem(type(built) == "table" and built.message or tostring(built))
+						else
+							phasers[#phasers + 1] = built.xml
+							effects[#effects + 1] = built.effect
+						end
+					else
+						local ok, resolved = pcall(resolveValue, map[attr], v, label)
+						if not ok then
+							problem(type(resolved) == "table" and resolved.message or tostring(resolved))
+						else
+							-- "Absolute" is percent of the whole channel, i.e. exact DMX, and MA picks the channel function
+							-- from it. (Function + AbsolutePhys is ambiguous when several functions share an attribute.)
+							local target = resolved.exact or (resolved.dmxMin + resolved.dmxMax) // 2
+							phasers[#phasers + 1] = string.format(
+								'            <Phaser IDType="0" ID="%d" Attribute="%s" GridPos="%d" GridPosMatr="%d" Selective="Selective"><Step Function="%s" Absolute="%.6f"/></Phaser>',
+								fid, xmlEscape(attr), gridPos, gridPos, xmlEscape(resolved.fn.attribute or attr), target / 0xFFFFFF * 100)
+							expected[#expected + 1] = { fid = fid, attribute = attr, min = resolved.dmxMin, max = resolved.dmxMax }
+						end
+					end
+				end
+				gridPos = gridPos + 1
+			end
+		end
+	end
+	if #problems > 0 then
+		local lines = {}
+		for i, message in ipairs(problems) do
+			local fids = problems[message] or {}
+			lines[i] = #fids > 0 and string.format("%s (FID %s)", message, table.concat(fids, ", ")) or message
+		end
+		fail("bad-value", table.concat(lines, "; "))
+	end
+	if #phasers == 0 then fail("bad-args", "no values to store") end
+
+	local backup
+	if existing then
+		local sep = GetPathSeparator()
+		local dir = GetPath(Enums.PathType.Library) .. sep .. "datapools" .. sep .. "presets"
+		CreateDirectoryRecursive(dir)
+		local file = string.format("grandmcp-backup-%s-preset%s.%d.xml", os.date("%Y%m%d-%H%M%S"), tostring(args.pool), no)
+		if existing:Export(dir, file) then backup = dir .. sep .. file end
+	end
+
+	local xml = table.concat({
+		'<?xml version="1.0" encoding="UTF-8"?>',
+		'<GMA3 DataVersion="' .. xmlEscape(BuildDetails().BigVersion) .. '">',
+		'    <Preset Name="' .. xmlEscape(name) .. '">',
+		'        <PresetData Size="' .. #phasers .. '">',
+		table.concat(phasers, "\n"),
+		"        </PresetData>",
+		"    </Preset>",
+		"</GMA3>",
+	}, "\n")
+	local sep = GetPathSeparator()
+	local dir, file = GetPath(Enums.PathType.Temp), "grandmcp_preset.xml"
+	local f = io.open(dir .. sep .. file, "w")
+	if not f then fail("write-failed", "cannot write " .. dir .. sep .. file) end
+	f:write(xml)
+	f:close()
+	local p = existing or pool:Create(no)
+	local scratch
+	if not p then
+		-- Pools nothing was ever stored in (the All pools 21-25 in a new show) have no slots yet, so Create fails.
+		-- Import into a free slot of the Dimmer pool and move it over; that also gives the pool its slots.
+		guardIdle()
+		local dimmers = DataPool().PresetPools[1]
+		for slot = 999, 900, -1 do
+			if not dimmers[slot] then
+				scratch = slot
+				break
+			end
+		end
+		p = scratch and dimmers:Create(scratch)
+		if not p then fail("import-failed", "could not create preset " .. tostring(args.pool) .. "." .. no) end
+	end
+	local okImport, imported = pcall(p.Import, p, dir .. sep, file)
+	os.remove(dir .. sep .. file)
+	if not okImport or not imported then fail("import-failed", "MA could not import the preset") end
+	if scratch then
+		CmdIndirect(string.format("Move Preset 1.%d At Preset %d.%d", scratch, math.tointeger(args.pool), no))
+		local t0 = socket.gettime()
+		repeat
+			coroutine.yield(0.05)
+			if GetTopModal() ~= nil then failModal("a pop-up opened while moving the preset into pool " .. tostring(args.pool)) end
+		until pool[no] ~= nil or socket.gettime() - t0 > 5
+		if not pool[no] then fail("import-failed", "could not move the preset into pool " .. tostring(args.pool)) end
+	end
+
+	-- Verify what MA made of it, per fixture and attribute.
+	p = pool[no]
+	local okData, data = pcall(GetPresetData, p)
+	local byFixture = okData and type(data) == "table" and data.by_fixtures or {}
+	local mismatches = {}
+	for _, e in ipairs(expected) do
+		local v = byFixture[e.fid] or byFixture[tostring(e.fid)]
+		local step = v and v[e.attribute] and v[e.attribute][1]
+		local dmx = step and step.absolute_value
+		if dmx and dmx > 0xFFFFFF then dmx = 0xFFFFFF end -- MA writes full as 2^24
+		if not dmx or dmx < e.min or dmx > e.max then
+			mismatches[#mismatches + 1] = string.format("FID %d %s: expected DMX %06X-%06X, got %s", e.fid, e.attribute, e.min, e.max, dmx and string.format("%06X", dmx) or "nothing")
+		end
+	end
+	local exported = #effects > 0 and exportText(p) or ""
+	for _, e in ipairs(effects) do
+		if e.master and not exported:find(string.format('ID="%d" Attribute="%s"[^>]-SpeedMaster="Speed%d"', e.fid, e.attribute, e.master)) then
+			mismatches[#mismatches + 1] = string.format("FID %d %s: not linked to speed master %d", e.fid, e.attribute, e.master)
+		end
+		local v = byFixture[e.fid] or byFixture[tostring(e.fid)]
+		local d = v and v[e.attribute]
+		if not d then
+			mismatches[#mismatches + 1] = string.format("FID %d %s: effect missing", e.fid, e.attribute)
+		else
+			if math.abs((tonumber(d.speed) or -1) - e.speed) > 0.01 then
+				mismatches[#mismatches + 1] = string.format("FID %d %s: speed %s instead of %.3f", e.fid, e.attribute, tostring(d.speed), e.speed)
+			end
+			local diff = math.abs(((tonumber(d.phase) or 0) - e.phase + 180) % 360 - 180)
+			if diff > 0.5 then mismatches[#mismatches + 1] = string.format("FID %d %s: phase %s instead of %.1f", e.fid, e.attribute, tostring(d.phase), e.phase) end
+			for si, range in ipairs(e.steps) do
+				local dmx = d[si] and d[si].absolute_value
+				if dmx and dmx > 0xFFFFFF then dmx = 0xFFFFFF end
+				if not dmx or dmx < range.min or dmx > range.max then
+					mismatches[#mismatches + 1] = string.format("FID %d %s step %d: expected DMX %06X-%06X, got %s", e.fid, e.attribute, si, range.min, range.max, dmx and string.format("%06X", dmx) or "nothing")
+				end
+			end
+		end
+	end
+	return { pool = math.tointeger(args.pool), no = no, name = p.name, values = #expected, effects = #effects, verified = #mismatches == 0, mismatches = mismatches, backup = backup }
+end
+
+---------------------------------------------------------------------------
+-- Sequences and executors. A sequence is written as MA XML: OffCue and CueZero first (MA maps cues by position),
+-- names on both Cue and Part, timing on the Part. Looks either reference a preset ("s<pool>.<no>", so the cue follows
+-- the preset when it changes) or carry their own values.
+---------------------------------------------------------------------------
+
+local TRIGGERS = { go = "Go", follow = "Follow", time = "Time" }
+
+local function presetLookPhasers(look, live, maps, problems, phasers)
+	local poolNo, presetNo = math.tointeger(look.preset.pool), math.tointeger(look.preset.no)
+	local pool = DataPool().PresetPools[poolNo or -1]
+	local preset = pool and pool[presetNo or -1]
+	if not preset then
+		problems[#problems + 1] = string.format("no preset %s.%s", tostring(look.preset.pool), tostring(look.preset.no))
+		return
+	end
+	local okData, data = pcall(GetPresetData, preset)
+	local byFixture = okData and type(data) == "table" and data.by_fixtures or {}
+	local wanted
+	if type(look.fids) == "table" then
+		wanted = {}
+		for _, fid in ipairs(look.fids) do wanted[math.tointeger(fid) or -1] = true end
+	end
+	local count = 0
+	for fidKey, attrs in pairs(byFixture) do
+		local fid = math.tointeger(tonumber(fidKey))
+		if fid and (not wanted or wanted[fid]) then
+			local f = findFixture(live, fid)
+			local mode = f and f:Get("ModeDirect")
+			local key = mode and mode:ToAddr() or "?"
+			maps[key] = maps[key] or (mode and attributeMap(mode))
+			local map = maps[key] or {}
+			for attr, v in pairs(attrs) do
+				local step = type(v) == "table" and v[1]
+				if step and step.absolute_value then
+					local fns = map[attr] and map[attr].functions or {}
+					local fn = fns[(step.channel_function or 0) + 1] or fns[1]
+					local dmx = math.min(step.absolute_value, 0xFFFFFF)
+					phasers[#phasers + 1] = string.format(
+						'<Phaser IDType="0" ID="%d" Attribute="%s" AbsPreset="s%d.%d" GridPos="*%d" Selective="Selective"><Step Function="%s" Absolute="*%.6f"/></Phaser>',
+						fid, xmlEscape(attr), poolNo, presetNo, v.gridpos or 0, xmlEscape(fn and fn.attribute or attr), dmx / 0xFFFFFF * 100)
+					count = count + 1
+				end
+			end
+		end
+	end
+	if count == 0 then problems[#problems + 1] = string.format("preset %d.%d has no values for the given fixtures", poolNo, presetNo) end
+end
+
+local function valueLookPhasers(look, live, maps, problems, phasers)
+	for i, value in ipairs(look.fids or {}) do
+		local fid = math.tointeger(value)
+		local f = fid and findFixture(live, fid)
+		if not f then
+			problems[#problems + 1] = "no fixture with FID " .. tostring(value)
+		else
+			local mode = f:Get("ModeDirect")
+			local key = mode and mode:ToAddr() or "?"
+			maps[key] = maps[key] or (mode and attributeMap(mode))
+			local map = maps[key] or {}
+			local typeName = f:Get("FixtureType") and f:Get("FixtureType").name or "?"
+			for attr, v in pairs(look.values or {}) do
+				local label = string.format("FID %d (%s) %s", fid, typeName, attr)
+				if not map[attr] then
+					problems[#problems + 1] = label .. ": this fixture type has no such attribute"
+				else
+					local ok, resolved = pcall(resolveValue, map[attr], v, label)
+					if not ok then
+						problems[#problems + 1] = type(resolved) == "table" and resolved.message or tostring(resolved)
+					else
+						local target = resolved.exact or (resolved.dmxMin + resolved.dmxMax) // 2
+						phasers[#phasers + 1] = string.format(
+							'<Phaser IDType="0" ID="%d" Attribute="%s" GridPos="%d" Selective="Selective"><Step Function="%s" Absolute="%.6f"/></Phaser>',
+							fid, xmlEscape(attr), i - 1, xmlEscape(resolved.fn.attribute or attr), target / 0xFFFFFF * 100)
+					end
+				end
+			end
+		end
+	end
+end
+
+local function cueTiming(cue)
+	local part = {}
+	for key, prop in pairs({ fade = "CueInFade", outFade = "CueOutFade", delay = "CueInDelay", outDelay = "CueOutDelay" }) do
+		if type(cue[key]) == "number" then part[#part + 1] = string.format('%s="%s"', prop, tostring(cue[key])) end
+	end
+	return table.concat(part, " ")
+end
+
+local function cueInfo(c)
+	local function g(o, p)
+		if not o then return nil end
+		local ok, v = pcall(o.Get, o, p, Enums.Roles.Display)
+		return ok and v or nil
+	end
+	local part = c:Ptr(1)
+	return {
+		no = tonumber((g(c, "No") or ""):match("[%d%.]+") or ""),
+		name = c.name,
+		trigger = g(c, "TrigType"),
+		triggerTime = g(c, "TrigTime"),
+		fade = g(part, "CueInFade"),
+		outFade = g(part, "CueOutFade"),
+	}
+end
+
+ops["sequence.list"] = function()
+	local out = {}
+	for i, s in ipairs(DataPool().Sequences:Children()) do
+		local cues = {}
+		for _, c in ipairs(s:Children()) do
+			local info = cueInfo(c)
+			if info.no and info.no > 0 then cues[#cues + 1] = info end
+		end
+		out[#out + 1] = { no = tonumber(tostring(display(s, "No")):match("^%d+")), name = s.name, cues = cues }
+		if i % 25 == 0 then coroutine.yield() end
+	end
+	return out
+end
+
+-- args: { no, name, overwrite, cues = [{ no, name, fade?, outFade?, delay?, outDelay?, trigger?, triggerTime?,
+--         looks = [{ preset = { pool, no }, fids? } | { fids, values }] }] }
+ops["sequence.store"] = function(args)
+	local no = groupNo(args.no)
+	local name = args.name
+	if type(name) ~= "string" or name == "" or #name > 200 then fail("bad-args", "name must be a non-empty string") end
+	if type(args.cues) ~= "table" or #args.cues == 0 then fail("bad-args", "cues must be a non-empty array") end
+	local pool = DataPool().Sequences
+	local existing = pool[no]
+	if existing and not args.overwrite then
+		fail("exists", string.format("sequence %d already exists ('%s'); pass overwrite to replace it", no, tostring(existing.name)))
+	end
+
+	local live = ShowData().LivePatch
+	local maps, problems, cueXml, expectedPhasers = {}, {}, {}, 0
+	for i, cue in ipairs(args.cues) do
+		local cueNo = tonumber(cue.no) or i
+		local cueName = type(cue.name) == "string" and cue.name ~= "" and cue.name or ("Cue " .. tostring(cueNo))
+		local phasers = {}
+		for _, look in ipairs(cue.looks or {}) do
+			if type(look.preset) == "table" then
+				presetLookPhasers(look, live, maps, problems, phasers)
+			else
+				valueLookPhasers(look, live, maps, problems, phasers)
+			end
+		end
+		local trigger = ""
+		if cue.trigger ~= nil then
+			local t = TRIGGERS[tostring(cue.trigger):lower()]
+			if not t then problems[#problems + 1] = "cue " .. tostring(cueNo) .. ": trigger must be go, follow or time" end
+			trigger = string.format(' TrigType="%s"', t or "Go")
+			if type(cue.triggerTime) == "number" then trigger = trigger .. string.format(' TrigTime="%s"', tostring(cue.triggerTime)) end
+		end
+		expectedPhasers = expectedPhasers + #phasers
+		cueXml[#cueXml + 1] = string.format(
+			'        <Cue No="%s" Name="%s"%s>\n            <Part Name="%s" %s>\n                <PresetData Size="%d">\n                    %s\n                </PresetData>\n            </Part>\n        </Cue>',
+			tostring(cueNo), xmlEscape(cueName), trigger, xmlEscape(cueName), cueTiming(cue), #phasers, table.concat(phasers, "\n                    "))
+	end
+	if #problems > 0 then fail("bad-value", table.concat(problems, "; ")) end
+
+	local backup
+	if existing then
+		guardIdle()
+		local sep = GetPathSeparator()
+		local dir = GetPath(Enums.PathType.Library) .. sep .. "datapools" .. sep .. "sequences"
+		CreateDirectoryRecursive(dir)
+		local file = string.format("grandmcp-backup-%s-sequence%d.xml", os.date("%Y%m%d-%H%M%S"), no)
+		if existing:Export(dir, file) then backup = dir .. sep .. file end
+		-- Replace by recreating: importing over an existing sequence keeps leftovers (e.g. CueZero timing).
+		CmdIndirect(string.format("Delete Sequence %d /NoConfirmation", no))
+		local t0 = socket.gettime()
+		repeat
+			coroutine.yield(0.05)
+			if GetTopModal() ~= nil then failModal("a pop-up opened while replacing sequence " .. no) end
+		until pool[no] == nil or socket.gettime() - t0 > 5
+		if pool[no] ~= nil then fail("replace-failed", "could not remove the old sequence " .. no) end
+	end
+
+	local xml = table.concat({
+		'<?xml version="1.0" encoding="UTF-8"?>',
+		'<GMA3 DataVersion="' .. xmlEscape(BuildDetails().BigVersion) .. '">',
+		'    <Sequence Name="' .. xmlEscape(name) .. '">',
+		'        <Cue Name="OffCue" Release="Yes" Assert="Assert"><Part/></Cue>',
+		'        <Cue Name="CueZero" No="0"><Part/></Cue>',
+		table.concat(cueXml, "\n"),
+		"    </Sequence>",
+		"</GMA3>",
+	}, "\n")
+	local sep = GetPathSeparator()
+	local dir, file = GetPath(Enums.PathType.Temp), "grandmcp_sequence.xml"
+	local f = io.open(dir .. sep .. file, "w")
+	if not f then fail("write-failed", "cannot write " .. dir .. sep .. file) end
+	f:write(xml)
+	f:close()
+	local s = pool:Create(no)
+	if not s then fail("import-failed", "could not create sequence " .. no) end
+	local okImport, imported = pcall(s.Import, s, dir .. sep, file)
+	os.remove(dir .. sep .. file)
+	if not okImport or not imported then fail("import-failed", "MA could not import the sequence") end
+
+	s = pool[no]
+	local cues = {}
+	for _, c in ipairs(s:Children()) do
+		local info = cueInfo(c)
+		if info.no and info.no > 0 then cues[#cues + 1] = info end
+	end
+	local text = exportText(s) or ""
+	local _, phaserCount = text:gsub("<Phaser ", "")
+	local verified = #cues == #args.cues and phaserCount >= expectedPhasers
+	return { no = no, name = s.name, cues = cues, values = phaserCount, expectedValues = expectedPhasers, verified = verified, backup = backup }
+end
+
+-- args: { sequence, page, executor }
+ops["executor.assign"] = function(args)
+	local seqNo, page, exec = math.tointeger(args.sequence), math.tointeger(args.page), math.tointeger(args.executor)
+	if not seqNo or not page or not exec then fail("bad-args", "sequence, page and executor must be integers") end
+	if not DataPool().Sequences[seqNo] then fail("not-found", "no sequence " .. seqNo) end
+	guardIdle()
+	-- MA silently replaces whatever is on the executor, so only do that when asked.
+	for _, e in ipairs(DataPool().Pages[page] and DataPool().Pages[page]:Children() or {}) do
+		if tonumber(tostring(display(e, "No")):match("^%d+")) == exec then
+			local obj = e:Get("Object")
+			if obj and obj ~= DataPool().Sequences[seqNo] and not args.overwrite then
+				fail("exists", string.format("executor %d.%d already holds %s '%s'; pass overwrite to replace it", page, exec, obj:GetClass(), tostring(obj.name)))
+			end
+		end
+	end
+	CmdIndirect(string.format("Assign Sequence %d At Page %d.%d", seqNo, page, exec))
+	-- Page children are the executors that exist, so find the one with this number (not the n-th child).
+	local function assigned()
+		local p = DataPool().Pages[page]
+		for _, e in ipairs(p and p:Children() or {}) do
+			if tonumber(tostring(display(e, "No")):match("^%d+")) == exec then
+				local obj = e:Get("Object")
+				return obj ~= nil and obj == DataPool().Sequences[seqNo]
+			end
+		end
+		return false
+	end
+	local t0 = socket.gettime()
+	repeat
+		coroutine.yield(0.05)
+		if GetTopModal() ~= nil then failModal("a pop-up opened while assigning the executor") end
+	until assigned() or socket.gettime() - t0 > 5
+	if not assigned() then fail("assign-failed", string.format("executor %d.%d does not show sequence %d", page, exec, seqNo)) end
+	return { sequence = seqNo, page = page, executor = exec, name = DataPool().Sequences[seqNo].name }
+end
+
+-- args: { page } -> executors on the page that have something assigned.
+ops["executor.list"] = function(args)
+	local page = math.tointeger(args.page) or 1
+	local p = DataPool().Pages[page]
+	local out = {}
+	for _, e in ipairs(p and p:Children() or {}) do
+		local obj = e:Get("Object")
+		if obj then
+			out[#out + 1] = { executor = tonumber(tostring(display(e, "No")):match("^%d+")), class = obj:GetClass(), name = obj.name, no = tonumber(tostring(display(obj, "No")):match("^%d+")) }
+		end
+	end
+	return { page = page, executors = out }
+end
+
+---------------------------------------------------------------------------
+-- Screenshots, taken by grandMA3 itself ("Store Image ... /Screen"), so they work on any OS and over the network.
+-- The image lands in the show's image pool, is exported (PNG as base64 blocks) and deleted again.
+---------------------------------------------------------------------------
+
+-- args: { screen = 1, full = false }
+ops["screen.capture"] = function(args)
+	local screen = math.tointeger(args.screen) or 1
+	if screen < 1 or screen > 16 then fail("bad-args", "screen must be 1-16") end
+	guardIdle()
+	local images = ShowData().MediaPools.Images
+	local slot
+	for n = 999, 900, -1 do
+		if not images[n] then
+			slot = n
+			break
+		end
+	end
+	if not slot then fail("busy", "no free scratch slot in the image pool (900-999)") end
+	CmdIndirect(string.format('Store Image 3.%d /Screen "%d" /ScreenOnly "%s"', slot, screen, args.full and "No" or "Yes"))
+	local t0 = socket.gettime()
+	repeat
+		coroutine.yield(0.05)
+		if GetTopModal() ~= nil then failModal("a pop-up opened while taking the screenshot") end
+	until images[slot] ~= nil or socket.gettime() - t0 > 5
+	if not images[slot] then fail("capture-failed", "grandMA3 did not store a screenshot of screen " .. screen .. " (does that screen exist?)") end
+	local text = exportText(images[slot]) or ""
+	CmdIndirect(string.format("Delete Image 3.%d /NoConfirmation", slot))
+	local blocks = {}
+	for b64 in text:gmatch('Base64="([^"]*)"') do blocks[#blocks + 1] = b64 end
+	t0 = socket.gettime()
+	repeat
+		coroutine.yield(0.05)
+	until images[slot] == nil or socket.gettime() - t0 > 3
+	if #blocks == 0 then fail("capture-failed", "the screenshot could not be read back") end
+	return { screen = screen, blocks = blocks }
 end
 
 -- Probe ops for development; disabled unless started with "dev".

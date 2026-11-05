@@ -9,6 +9,9 @@ import { registerLibraryTools } from './tools/library.ts';
 import { registerManualTools } from './tools/manual.ts';
 import { registerMoveTools } from './tools/move.ts';
 import { registerPatchTools } from './tools/patch.ts';
+import { registerPresetTools } from './tools/presets.ts';
+import { registerScreenshotTools } from './tools/screenshot.ts';
+import { registerSequenceTools } from './tools/sequences.ts';
 import { registerStatusTools } from './tools/status.ts';
 import { createContext } from './context.ts';
 
@@ -22,6 +25,9 @@ serveStdio(() => {
 	registerPatchTools(server, ctx);
 	registerMoveTools(server, ctx);
 	registerGroupTools(server, ctx);
+	registerPresetTools(server, ctx);
+	registerSequenceTools(server, ctx);
+	registerScreenshotTools(server, ctx);
 	registerManualTools(server, ctx);
 	registerPatchFromDocumentPrompt(server);
 

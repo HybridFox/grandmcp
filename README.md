@@ -52,7 +52,7 @@ change is complete. MA cannot undo a patch commit, so every apply first exports 
     Plugin "grandmcp"
     ```
 
-    The command line history should show `grandmcp 0.7.0 listening on 127.0.0.1:9810`. Save the show to keep the
+    The command line history should show `grandmcp 0.12.0 listening on 127.0.0.1:9810`. Save the show to keep the
     plugin in it. The plugin has to be started again after loading a show.
 
 3. Add the server to your MCP client. For Claude Code:
@@ -91,6 +91,14 @@ change is complete. MA cannot undo a patch commit, so every apply first exports 
 | `grandmcp_group_list`                            | Groups in the current data pool with their fixture IDs                                                                                                                 |        |
 | `grandmcp_group_store`                           | Create or replace a group with exactly these fixtures, in order                                                                                                        | yes    |
 | `grandmcp_group_delete`                          | Delete a group (exported first)                                                                                                                                        | yes    |
+| `grandmcp_fixture_attributes`                    | What a fixture type can do: attributes, channel functions, physical ranges, named slots (wheel positions, gel macros, strobe modes)                                    |        |
+| `grandmcp_preset_list`                           | Presets per pool with their fixtures and attributes                                                                                                                    |        |
+| `grandmcp_preset_store`                          | Create or replace a preset from values or effects per fixture, verified after import                                                                                   | yes    |
+| `grandmcp_sequence_list`                         | Sequences with their cues, fade times and triggers                                                                                                                     |        |
+| `grandmcp_sequence_store`                        | Create or replace a sequence whose cues reference presets and/or carry values, with timing and triggers                                                                | yes    |
+| `grandmcp_executor_list`                         | What is assigned to the executors of a page                                                                                                                            |        |
+| `grandmcp_executor_assign`                       | Put a sequence on an executor                                                                                                                                          | yes    |
+| `grandmcp_screenshot`                            | A screenshot of a grandMA3 screen, rendered by grandMA3 itself                                                                                                         |        |
 | `grandmcp_manual_search`, `grandmcp_manual_read` | Search and read the grandMA3 manual that ships with onPC                                                                                                               |        |
 
 The `patch_from_document` prompt walks Claude through a document-to-patch session.
@@ -158,6 +166,27 @@ fixture inside a grouping fixture is not supported yet.
 the programmer or the current selection. Fixture order is the selection order (what MAtricks and effects follow).
 Replacing or deleting a group exports the old one to `gma3_library/datapools/groups` first.
 
+## Presets, effects and sequences
+
+These are the building blocks of a busking show: palettes per group, effects with a speed you can tap, and cue lists
+on executors. Everything is written as grandMA3 XML and imported, so the programmer is never touched.
+
+- **Values** (`grandmcp_preset_store`) are given per attribute as a named slot (`{ "slot": "C3" }`, a gobo, a gel macro,
+  "open"), a percentage of the range (`{ "percent": 80 }`, pan 50 = centre), or a physical value
+  (`{ "physical": -45 }` degrees, `{ "physical": 8, "function": "Shutter1Strobe" }` Hz). `grandmcp_fixture_attributes`
+  lists what each fixture type offers. Values are converted per fixture type and checked after import against what
+  grandMA3 actually stored.
+- **Effects** are a value made of steps: `{ "effect": { "steps": [{ "percent": 100, "width": 25, "trans": 0 },
+{ "percent": 0 }], "bpm": 128, "phase": { "from": 0, "to": 360 }, "speedMaster": 1 } }` is a dimmer chase across
+  the fixtures, linked to speed master 1 so a BPM tap sets its speed. Steps can be any value type, so colour chases
+  over wheel slots work the same way.
+- **Sequences** (`grandmcp_sequence_store`) are cue lists. A cue's looks are preset references (the cue follows the
+  preset when you change it) and/or explicit values, with fade, delay and go/follow/time triggers.
+- **Executors** (`grandmcp_executor_assign`) put a sequence on a fader or button of a page. Something already on the
+  executor is only replaced with `overwrite`.
+
+Replacing a preset or sequence exports the old one to `gma3_library/datapools/presets` or `.../sequences` first.
+
 ## Safety
 
 - Read-only unless `GRANDMCP_ALLOW_WRITE=1`.
@@ -168,6 +197,8 @@ Replacing or deleting a group exports the old one to `gma3_library/datapools/gro
   someone in the Patch menu).
 - The patch is exported before every apply. Importing that file again **merges**: it restores fixtures that were
   changed or deleted, but does not remove fixtures added since. It is a record to recover from, not a one-click undo.
+- Patch changes (apply, move, fixture type import) are refused while sequences are running, unless you confirm and
+  Claude passes `duringPlayback`. `grandmcp_status` lists running sequences.
 - There is no tool that runs arbitrary Lua or command-line commands.
 
 ## Limitations
@@ -178,11 +209,15 @@ Replacing or deleting a group exports the old one to `gma3_library/datapools/gro
   seconds for 25,000 entries); it is then cached for 30 minutes. Loading it switches on all sources (MA, user,
   Share) in the fixture import dialog.
 - Share imports need the console to reach MA's World Server (internet).
+- The plugin has to be started after every show load (`Plugin "grandmcp"`); grandMA3 has no show-load hook to start it
+  automatically. Putting that command on a macro button is the easy way.
+- `grandmcp_screenshot` shows what is on a grandMA3 screen; to judge a look, put a 3D window on that screen.
 - The plugin only listens on 127.0.0.1. Driving a console on another machine is planned (see below).
 
 ## Roadmap
 
-- Presets and executor layouts generated from the patch
+- A guided prompt for building a busking show with these tools (the layout itself stays your design)
+- Executor options (fader and button functions) and speed master BPM
 - Cues and looks from a description
 - Connecting to a console or onPC on another machine (LAN with a token, or a grandMA3 session)
 

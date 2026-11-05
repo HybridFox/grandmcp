@@ -93,10 +93,14 @@ export function registerLibraryTools(server: McpServer, ctx: AppContext): void {
 			inputSchema: z.object({
 				file: z.string().min(1).describe('File name exactly as returned by the search.'),
 				path: z.string().optional().describe('Path from the search result; required to pick the right Share entry ("ws://GDTFShare/id=...").'),
+				duringPlayback: z
+					.boolean()
+					.default(false)
+					.describe('Allow this while sequences are running. Only after the user explicitly agreed: it can change what the audience sees.'),
 			}),
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
 		},
-		async ({ file, path }) => {
+		async ({ file, path, duringPlayback }) => {
 			if (!ctx.allowWrite) {
 				return WRITES_DISABLED;
 			}
@@ -119,7 +123,7 @@ export function registerLibraryTools(server: McpServer, ctx: AppContext): void {
 				}
 
 				const imported = await ctx.serialize(() =>
-					ctx.bridge.request<FixtureType>('patch.importType', { file: entry.file, path: entry.path }, 120_000),
+					ctx.bridge.request<FixtureType>('patch.importType', { file: entry.file, path: entry.path, duringPlayback }, 120_000),
 				);
 
 				return ok(imported, `Imported "${imported.name}":\n${describeTypes([imported])}`);

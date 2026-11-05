@@ -11,7 +11,8 @@ plugin over newline-delimited JSON on TCP 127.0.0.1:9810. See README.md for the 
 - `src/bridge/`: NDJSON client (`client.ts`) and the plugin's response shapes (`types.ts`).
 - `src/patch/`: pure logic, no console access. `schema.ts` (fixture-list input), `planner.ts` (IDs, addresses,
   conflicts), `changes.ts` (changes to existing fixtures, judged on the final state), `library.ts` (fuzzy catalog search).
-- `src/tools/`: one `registerXTools(server, ctx)` per area. `result.ts` holds `ok` / `failure` / `fromError`.
+- `src/tools/`: one `registerXTools(server, ctx)` per area (status, inspect, library, patch, move, groups, presets,
+  sequences, manual). `result.ts` holds `ok` / `failure` / `fromError`.
 - `src/prompts/`: MCP prompts.
 - `scripts/`: `probe.ts` (dev CLI), `install-plugin.ts`, `smoke.ts` (end-to-end through a real MCP client).
 - `docs/ma3/`: verified grandMA3 facts (`probe-notes.md`) and the `HelpLua` API dump for 2.5.1.1.
@@ -40,6 +41,9 @@ plugin over newline-delimited JSON on TCP 127.0.0.1:9810. See README.md for the 
 - **Writes are plan → review → apply.** New write tools check `ctx.allowWrite`, run inside `ctx.serialize`, and
   back up or verify state. Once a commit happened, report "committed but unverified" rather than an error.
 - **A timeout after sending is an unknown outcome.** Never retry a write automatically (`BridgeError.outcome`).
+- **Write show data as MA XML and verify it.** Groups, presets and sequences are generated XML imported into the pool
+  slot (no programmer, no dialogs); after import, read back (`GetPresetData`, exports, object properties) and report
+  mismatches instead of assuming success.
 - **Keep pure logic pure.** Planning and searching stay in `src/patch/` with unit tests; tools only fetch and format.
 - Code style: tabs, single quotes, width 160 (prettier + eslint config from the repo). `erasableSyntaxOnly` is on,
   so no enums, namespaces or constructor parameter properties: Node runs the sources without a build.
