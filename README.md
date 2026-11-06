@@ -5,8 +5,9 @@ An [MCP](https://modelcontextprotocol.io) server that lets Claude (or any MCP cl
 equipment list or plot, and it finds the fixture types, works out fixture IDs and DMX addresses, shows you the plan
 and patches it after you agree.
 
-> **Status: early.** Tested on grandMA3 onPC 2.5.1.1 on macOS. Windows onPC should work the same way but has not
-> been tested yet. Try it on a test show before you point it at anything that matters.
+> **Status: early.** Developed on grandMA3 onPC 2.5.1.1 on macOS; on Windows (onPC with a wing) the plugin, the
+> connection and autostart are confirmed, the full test suite has not run there yet. Try it on a test show before you
+> point it at anything that matters.
 >
 > grandmcp is an independent project, not affiliated with or endorsed by MA Lighting. grandMA3 is a trademark of
 > MA Lighting Technology GmbH.
@@ -52,8 +53,8 @@ change is complete. MA cannot undo a patch commit, so every apply first exports 
     Plugin "grandmcp"
     ```
 
-    The command line history should show `grandmcp 0.22.0 listening on 127.0.0.1:9810`. Save the show to keep the
-    plugin in it. The plugin has to be started again after loading a show.
+    The command line history should show `grandmcp 0.22.2 listening on 127.0.0.1:9810`. Save the show to keep the
+    plugin in it. To have it start with onPC instead, see [Starting the plugin with onPC](#starting-the-plugin-with-onpc).
 
 3. Add the server to your MCP client. For Claude Code:
 
@@ -72,6 +73,20 @@ change is complete. MA cannot undo a patch commit, so every apply first exports 
 
 4. Ask Claude to check the connection ("what's the status of my console?"), or start a patch with the
    `patch_from_document` prompt.
+
+## Starting the plugin with onPC
+
+onPC can run a plugin from the library at launch with the `RUNPLUGIN` parameter (`-1` is the Lua component, there is
+only one). On Windows, copy the onPC shortcut and add it to the target:
+
+```
+"C:\Program Files\MALightingTechnology\gma3_2.5.1\bin\app_system.exe" HOSTTYPE=onPC RUNPLUGIN="grandmcp.xml"-1
+```
+
+The plugin is imported into the loaded show (on a fresh show it landed in plugin slot 1) and started in local mode,
+without arguments, so `"lan"` and `"dev"` are not set this way; type `Plugin "grandmcp" "dev on"` if you need the dev
+ops. Not tested yet: what happens when slot 1 is taken, whether the plugin keeps running after loading another show,
+and the macOS equivalent.
 
 ## Driving grandMA3 on another machine
 
@@ -101,6 +116,18 @@ laptop and an onPC with wings on a show PC.
 Network clients must send the token before anything else and are dropped otherwise; clients on the grandMA3 machine
 itself need no token. The connection is not encrypted, so use it on a trusted show network only. On Windows, allow
 onPC through the firewall when asked. Dev ops (`"dev"`) never answer network clients.
+
+**Alternative: an SSH tunnel.** If the grandMA3 machine runs an SSH server (Windows: the built-in OpenSSH Server
+feature), forward the plugin's port and leave the plugin in local mode. No token, nothing listening on the network,
+and the connection is encrypted:
+
+```sh
+ssh -N -L 9811:127.0.0.1:9810 user@192.168.1.50
+claude mcp add grandmcp -e GRANDMCP_PORT=9811 -e GRANDMCP_ALLOW_WRITE=1 -- node /path/to/grandmcp/src/index.ts
+```
+
+The plugin sees tunnelled clients as local, so dev ops answer too. Install the plugin with `scp` into the library
+folder above.
 
 ## Tools
 
@@ -265,12 +292,12 @@ Replacing a preset or sequence exports the old one to `gma3_library/datapools/pr
   seconds for 25,000 entries); it is then cached for 30 minutes. Loading it switches on all sources (MA, user,
   Share) in the fixture import dialog.
 - Share imports need the console to reach MA's World Server (internet).
-- The plugin has to be started after every show load (`Plugin "grandmcp"`); grandMA3 has no show-load hook to start it
-  automatically. Putting that command on a macro button is the easy way.
+- grandMA3 has no show-load hook. onPC can start the plugin at launch (`RUNPLUGIN`, see above); otherwise start it
+  with `Plugin "grandmcp"`, for example from a macro button.
 - `grandmcp_screenshot` shows a grandMA3 screen. Fixtures and beams render in onPC's 3D view without MA hardware.
   When onPC runs on the same Mac, the onPC window is captured through macOS (grandMA3's own capture only grabs the
   top-left corner on Retina screens); on other machines grandMA3 renders the screenshot itself.
-- Network mode is plain TCP with a token; not encrypted.
+- Network mode is plain TCP with a token; not encrypted. Use an SSH tunnel where that matters.
 
 ## Roadmap
 

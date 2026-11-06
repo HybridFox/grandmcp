@@ -14,7 +14,7 @@ local myHandle = select(4, ...)
 local socket = require("socket")
 local json = require("json")
 
-local VERSION = "0.22.1"
+local VERSION = "0.22.2"
 local LOCAL_HOST = "127.0.0.1"
 local TOKEN_FILE = "grandmcp-token.txt" -- in gma3_library
 local PORT = 9810
@@ -2619,19 +2619,25 @@ local function loadOrCreateToken()
 	local token = f and (f:read("l") or ""):match("^%s*(%x+)%s*$")
 	if f then f:close() end
 	if token and #token >= 32 then return token end
-	local bytes = {}
+	token = nil
 	local random = io.open("/dev/urandom", "rb")
 	if random then
-		local raw = random:read(16)
+		local raw = random:read(16) or ""
 		random:close()
-		for i = 1, #(raw or "") do bytes[#bytes + 1] = string.format("%02x", raw:byte(i)) end
+		if #raw == 16 then token = raw:gsub(".", function(c) return string.format("%02x", c:byte()) end) end
 	end
-	if #bytes < 16 then
-		math.randomseed(math.floor(socket.gettime() * 1e6) % 2147483647)
-		bytes = {}
-		for _ = 1, 16 do bytes[#bytes + 1] = string.format("%02x", math.random(0, 255)) end
+	if not token and io.popen then
+		-- Windows has no /dev/urandom; .NET GUIDs come from the system's cryptographic generator.
+		local p = io.popen([[powershell -NoProfile -NonInteractive -Command "[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')"]])
+		if p then
+			token = (p:read("a") or ""):match("^%s*(%x+)%s*$")
+			p:close()
+			if token and #token < 32 then token = nil end
+		end
 	end
-	token = table.concat(bytes)
+	if not token then
+		error("no secure random source for the network token; put 32 or more hex characters in " .. path .. " and start again")
+	end
 	f = io.open(path, "w")
 	if not f then error("cannot write " .. path) end
 	f:write(token, "\n")

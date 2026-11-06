@@ -184,6 +184,11 @@ Selective="Selective"><Step Function="<function attribute>" .../></Phaser>`. Imp
 
 - `sequence:HasActivePlayback()` is true while a sequence runs (`Go+ Sequence 10` / `Off Sequence 10`).
 - No show-load hook was found: Agenda events are time based only (absolute or twilight times, repeat, valid duration).
+- onPC starts a plugin at launch with `app_system.exe HOSTTYPE=onPC RUNPLUGIN="grandmcp.xml"-1` (manual: "Load a Show
+  File During Startup"; `-1` is the Lua component). Verified on Windows 2.5.1.1: on a fresh unsaved show the plugin
+  was imported into plugin slot 1 and running in local mode right after start, without arguments (so no `lan`/`dev`).
+  Unverified: an occupied slot 1, loading another show afterwards, macOS.
+- Windows Lua has no `/dev/urandom`; the network token falls back to PowerShell GUIDs through `io.popen` (not yet run on Windows).
 
 ## 3D
 

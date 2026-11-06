@@ -26,7 +26,9 @@ export const fixtureEntrySchema = z.object({
 		.min(1)
 		.max(1024)
 		.optional()
-		.describe('Universe to fill when patch is "auto". Defaults to 1, moving on to the next universe when full.'),
+		.describe(
+			'Universe to start filling when patch is "auto" (default 1). When it is full the row continues in the next universe, and the plan warns about it.',
+		),
 });
 
 export const patchPlanInputSchema = z.object({

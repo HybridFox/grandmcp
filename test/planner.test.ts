@@ -109,16 +109,21 @@ describe('planPatch', () => {
 		expect(result.fixtures.map((f) => f.patch)).toEqual(['1.003', '1.005']);
 	});
 
-	it('moves to the next universe when one is full, unless the universe was pinned', () => {
+	it('moves to the next universe when one is full', () => {
 		const free = plan([{ fid: 1, count: 7, type: 'Jolt Panel FX' }]);
 
 		expect(free.errors).toEqual([]);
+		expect(free.warnings).toEqual([]);
 		expect(free.fixtures.map((f) => f.patch)).toEqual(['1.001', '1.082', '1.163', '1.244', '1.325', '1.406', '2.001']);
+	});
 
-		const pinned = plan([{ fid: 1, count: 7, type: 'Jolt Panel FX', universe: 1 }]);
+	it('starts at the given universe and warns when the row continues past it', () => {
+		const result = plan([{ fid: 1, count: 8, type: 'Jolt Panel FX', universe: 4 }]);
 
-		expect(pinned.errors).toHaveLength(1);
-		expect(pinned.errors[0]).toMatch(/no free block of 81 channels for FID 7 in universe 1/);
+		expect(result.errors).toEqual([]);
+		expect(result.fixtures.map((f) => f.patch)).toEqual(['4.001', '4.082', '4.163', '4.244', '4.325', '4.406', '5.001', '5.082']);
+		expect(result.warnings).toHaveLength(1);
+		expect(result.warnings[0]).toMatch(/universe 4 is full: FID 7-8 continue in universe 5/);
 	});
 
 	it('rejects FIDs that exist in the show or twice in the plan', () => {

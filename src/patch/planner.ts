@@ -235,6 +235,7 @@ export function planPatch(input: PatchPlanInput, live: LivePatch, types: Fixture
 		}
 
 		let autoUniverse = entry.universe ?? 1;
+		const spilled: number[] = [];
 
 		for (let i = 0; i < entry.count; i++) {
 			const fid = entry.fid + i;
@@ -274,7 +275,7 @@ export function planPatch(input: PatchPlanInput, live: LivePatch, types: Fixture
 			} else if (entry.patch === 'auto' && !grouping) {
 				let address = occupancy.firstFree(autoUniverse, mode.footprint);
 
-				while (address === undefined && entry.universe === undefined && autoUniverse < MAX_UNIVERSE) {
+				while (address === undefined && autoUniverse < MAX_UNIVERSE) {
 					autoUniverse++;
 					address = occupancy.firstFree(autoUniverse, mode.footprint);
 				}
@@ -286,6 +287,10 @@ export function planPatch(input: PatchPlanInput, live: LivePatch, types: Fixture
 
 				occupancy.claim(autoUniverse, address, mode.footprint, owner);
 				patch = formatAddress(autoUniverse, address);
+
+				if (entry.universe !== undefined && autoUniverse !== entry.universe) {
+					spilled.push(fid);
+				}
 			}
 
 			fixtures.push({
@@ -298,6 +303,15 @@ export function planPatch(input: PatchPlanInput, live: LivePatch, types: Fixture
 				row,
 				...(entry.parent ? { parent: entry.parent } : {}),
 			});
+		}
+
+		if (spilled.length > 0) {
+			const first = spilled[0] as number;
+			const last = spilled[spilled.length - 1] as number;
+			const fids = first === last ? `FID ${first}` : `FID ${first}-${last}`;
+			const into = [...new Set(fixtures.filter((f) => spilled.includes(f.fid)).map((f) => (f.patch ?? '').split('.')[0]))].join(', ');
+
+			warnings.push(`${label}: universe ${entry.universe} is full: ${fids} continue in universe ${into}`);
 		}
 	});
 
